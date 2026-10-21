@@ -1,0 +1,6 @@
+{
+  "name": "Stick Fist & Kungfu Drifter Arcade Showcase",
+  "description": "Showcase arkade retro dua game kungfu stickman dalam format slide 16:9 interaktif yang responsif dan dapat dimainkan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

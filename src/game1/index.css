@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+html, body, #root { margin: 0; padding: 0; background: #000; height: 100%; overflow: hidden; }
+
+.pixel-font { font-family: 'Press Start 2P', monospace; image-rendering: pixelated; }
+
+.scanlines {
+  background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.12) 3px);
+  mix-blend-mode: multiply;
+  opacity: 0.6;
+}
+
+button { cursor: pointer; }
