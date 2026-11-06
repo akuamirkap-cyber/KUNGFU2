@@ -23,6 +23,8 @@ export default defineConfig(() => {
     server: {
       port: 3000,
       host: true,
+      // Allow the Arena live-preview host (https://{port}-{sandboxId}.e2b.app).
+      allowedHosts: ['.e2b.app'],
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },

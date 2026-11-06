@@ -16,6 +16,10 @@ function text(ctx: CanvasRenderingContext2D, t: string, x: number, y: number, si
 interface StickOpts {
   color: string; accent?: string; facing: number; walk: number; pose: string; t: number; scale: number; headR: number; body: number; legs: number;
   thick: number; sqx: number; sqy: number; weapon?: number; kind?: string; flash?: boolean; time: number; atk?: string; rot?: number; outline?: boolean; nunAng?: number; moveAng?: number; react?: number; reactAng?: number; skinBand?: string; skinHat?: string; bossWeap?: string;
+  // ---- legs only (ported from game2): is the body travelling, how hard it is sprinting, half-step px ----
+  moving?: boolean; run?: number; stride?: number;
+  /** per-entity phase seed so idle bounces/shuffles don't sync across a crowd */
+  seed?: number;
 }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -55,7 +59,6 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
   const c = o.flash ? '#fff' : o.color;
   const acc = o.accent || '#ffd166';
   const dirX = Math.cos(o.facing), dirY = Math.sin(o.facing);
-  const mX = Math.cos(o.moveAng ?? o.facing);
   const fy = dirY * 0.45; // depth component for strikes
   const flip = dirX < 0 ? -1 : 1;
   const legs = o.legs, body = o.body, hr = o.headR;
@@ -78,7 +81,8 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
   const center = -legs - body / 2;
   if (o.rot) { ctx.translate(0, center); ctx.rotate(o.rot); ctx.translate(0, -center); }
   if (o.pose === 'run') ctx.translate(Math.sin(o.walk) * 0.5, -Math.abs(Math.cos(o.walk)) * 1.3);
-  else if (o.pose === 'idle' && o.kind !== 'ghost') ctx.translate(0, Math.sin(o.time * 2.2) * 0.3);
+  else if ((o.pose === 'idle' || o.pose === 'shuffle') && o.kind !== 'ghost') ctx.translate(0, Math.sin(o.time * 2.2 + (o.seed ?? 0)) * 0.35);
+  else if (o.pose === 'brake') { const bk = clamp01(o.t); ctx.translate(-Math.cos(o.moveAng ?? o.facing) * 1.8 * bk, 1.2 * bk); }
   // ALI SHUFFLE: boxer bounce — the whole body hops lightly on the balls of the feet
 
   if (o.pose === 'getup') { ctx.translate(0, center); ctx.rotate(flip * 0.42); ctx.translate(0, -center); ctx.translate(0, 2.2); }
@@ -112,6 +116,7 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
   if (atk === 'THRUST' || atk === 'RIPOSTE') lean = flip * (0.1 + 0.45 * sc);
   if (atk === 'SPIN IAI') lean = -flip * 0.3 * u;
   if (o.pose === 'run') lean = flip * 0.42 + Math.sin(o.walk) * 0.07;
+  if (o.pose === 'brake') lean = -flip * 0.5 * clamp01(o.t);
   if (o.pose === 'sidekick') lean = -flip * 0.2;
   if (o.pose === 'rushpunch') lean = flip * 0.7;
   if (o.pose === 'uppercut') lean = -flip * 0.2;
@@ -136,20 +141,85 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
     limb(ctx, kneeX, hipY + kneeY, dx, hipY + dy, legs * 0.4, legs * 0.4, flip > 0 ? flip : -flip, c, w);
     circle(ctx, dx, hipY + dy, w * 0.8, c);
   };
+  // ==================== LEGS: GAME2 GAIT (ported from game2/game/stick.ts) ====================
+  // ONLY the legs come from game2. Torso, arms, weapon grips and every attack/fatality pose below
+  // are untouched, so weapons 1-9 keep game1's exact handling.
+  // game2 steps in WORLD space: during the stance phase the foot is PLANTED (it drifts backwards
+  // relative to the body), during the swing phase it flies forward on a bell curve and lands ahead
+  // of the hip. game.ts advances `walk` with the real ground speed, so a planted foot never slides.
+  // Knees bend toward the travel direction and lift while the leg swings through.
+  const GS = (legs * 0.76) / 4;          // game2's hip sits 4*scale above its feet; game1's foot line is legs*0.76 below the hip
+  const GAIT_DEPTH = 0.6;                // game2's own foreshortening for the depth (screen y) axis
+  const gux = Math.cos(o.moveAng ?? o.facing), guy = Math.sin(o.moveAng ?? o.facing);
+  const gsx = -guy, gsy = gux;           // sideways axis
+  const groundY = hipY + legs * 0.76;    // game1's foot baseline (unchanged)
+  const grun = clamp01(o.run ?? 0);      // 0 = walk .. 1 = full sprint
+  const gstride = (o.stride ?? 2.6 + 2.6 * grun) * GS;
+  // a 2-bone leg solved game2-style: knee = midpoint(hip,foot) + perpendicular * h * bend, the bend
+  // side is picked so the knee points along (kx,ky); `up` lifts the knee during the swing phase.
+  const gaitLeg = (fx: number, fy: number, up: number, kx: number, ky: number) => {
+    const dy = fy - hipY, d = Math.hypot(fx, dy);
+    const legLen = 5.2 * GS;             // game2: hip 4 -> leg reach 5.2, so the knee can actually bend
+    const half = legLen / 2;
+    const h = d < legLen ? Math.sqrt(Math.max(0, half * half - (d / 2) * (d / 2))) : 0;
+    if (d < 1.0 * GS) {
+      // peak of the swing at a full sprint: the foot is tucked right up at the hip, so fold the leg
+      // (knee leads forward) instead of drawing a degenerate zero-length line.
+      const kd = Math.hypot(kx, ky) || 1;
+      const jx0 = (kx / kd) * 1.15 * GS, jy0 = hipY + (ky / kd) * 1.15 * GS * GAIT_DEPTH + 0.5 * GS;
+      line(ctx, 0, hipY, jx0, jy0, c, w); line(ctx, jx0, jy0, fx, fy, c, w);
+      circle(ctx, fx, fy, w * 0.8, c); return;
+    }
+    if (h < 0.7 * GS) {                  // over-extended -> straight leg (game2 drops the knee there too)
+      line(ctx, 0, hipY, fx, fy, c, w); circle(ctx, fx, fy, w * 0.8, c); return;
+    }
+    const nx = -dy / d, ny = fx / d;
+    const dot = nx * kx + ny * ky;
+    const bend = Math.abs(dot) < 0.05 ? -flip : dot > 0 ? 1 : -1;
+    const jx = fx / 2 + nx * h * bend, jy = hipY + dy / 2 + ny * h * bend - up;
+    line(ctx, 0, hipY, jx, jy, c, w);
+    line(ctx, jx, jy, fx, fy, c, w);
+    circle(ctx, fx, fy, w * 0.8, c);
+  };
+  const legPhase = (ph: number) => {
+    // q = -PI/2 toe-off (foot furthest BACK) .. +PI/2 heel strike (foot furthest FORWARD).
+    // cos(q) > 0 -> swing (airborne, flying forward);  cos(q) < 0 -> stance (planted, moving back).
+    const q = ((((ph + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
+    let air = 0;
+    if (Math.cos(q) > 0) air = Math.sin(((q + Math.PI / 2) / Math.PI) * Math.PI);
+    return { along: Math.sin(q) * gstride, air };
+  };
+  const gaitLegs = () => {
+    const lift = (1.6 + 2.4 * grun) * GS;
+    const side = 0.7 * GS * flip;        // small lateral offset so the two feet never overlap
+    const fl = legPhase(o.walk), bl = legPhase(o.walk + Math.PI);
+    const kneeUp = (0.6 + 1.6 * grun) * GS * Math.max(fl.air, bl.air);
+    const put = (l: { along: number; air: number }, s: number, up: number) => gaitLeg(
+      gux * l.along + gsx * s,
+      groundY + (guy * l.along + gsy * s) * GAIT_DEPTH - l.air * lift,
+      up, gux, guy);
+    put(fl, side, kneeUp); put(bl, -side, kneeUp * 0.6);
+  };
+  const idleLegs = () => {
+    // game2 IDLE: planted staggered stance — now with an anime READY BOUNCE:
+    // knee spring, slow weight shift, tumit belakang ngangkat, dan mini-hop shuffle tiap ~3.2s
+    const dz = dirY * 0.9 * GS * GAIT_DEPTH, dxx = dirX * 0.6 * GS;
+    const sd = o.seed ?? 0;
+    const bt = o.time * 3.6 + sd;
+    const bounce = Math.sin(bt);                       // pegas lutut
+    const shift = Math.sin(bt * 0.5) * 0.85;           // pindah berat kaki ke kaki
+    const cyc = (o.time + sd * 0.37) % 3.2;
+    const shuf = cyc > 2.85 ? Math.sin((cyc - 2.85) / 0.35 * Math.PI) : 0;  // hop ganti kaki
+    const heel = Math.max(0, bounce) * 1.7 * GS;       // tumit belakang naik saat siap
+    gaitLeg((2.4 + shift + shuf * 1.5) * GS * flip + dxx, groundY + dz - shuf * 2.4 * GS, shuf * 1.8 * GS, dirX, dirY);
+    gaitLeg((-2 - shift - shuf * 1.5) * GS * flip + dxx, groundY - dz - heel, heel > 0.3 * GS ? 1.1 * GS : 0, dirX, dirY);
+  };
+  const stepping = o.moving !== false;   // undefined (corpses, title demo, ghosts) keeps stepping
   if (o.pose === 'broken') { line(ctx, 0, hipY, -3, 0, c, w); line(ctx, 0, hipY, 3, 0, c, w); }
   else if (o.pose === 'sweep') { const a = t * 22; limb(ctx, 0, hipY, Math.cos(a) * 10, hipY + Math.sin(a) * 4 + 2, 6, 6, flip, c, w); line(ctx, 0, hipY, -1, 0, c, w); }
   else if (o.pose === 'flykick') { line(ctx, 0, hipY, 1, hipY + 11, c, w); line(ctx, 0, hipY, -2, hipY + 8, c, w); }
   else if (o.pose === 'sidekick') { line(ctx, 0, hipY, dirX * 13, hipY + dirY * 13 - 2, c, w); circle(ctx, dirX * 13, hipY + dirY * 13 - 2, w * 0.9, c); limb(ctx, 0, hipY, -dirX * 4, hipY + 5, 5, 5, flip, c, w); }
-  else if (o.pose === 'run') {
-    // proper running stride: feet travel forward and back along the facing,
-    // knee bends during the recovery phase (leg lifts as it swings through)
-    const legR = (ph: number) => {
-      const stride = mX * Math.sin(ph) * 2.8;
-      const lift = Math.max(0, Math.cos(ph)) * legs * 0.24;
-      legJoint(stride, hipY + legs * 0.76 - lift);
-    };
-    legR(o.walk); legR(o.walk + Math.PI);
-  }
+  else if (o.pose === 'run') { gaitLegs(); }
   else if (o.pose === 'rushpunch') { line(ctx, 0, hipY, -dirX * 6, hipY + 1, c, w); line(ctx, 0, hipY, -dirX * 4, hipY + 3, c, w); }
   else if (o.pose === 'jump') { line(ctx, 0, hipY, dirX * 2, hipY + 2, c, w); line(ctx, 0, hipY, dirX * 1, hipY + 3, c, w); }
   else if (o.pose === 'crouch') { legJoint(-flip * 3, hipY + legs * 0.5); legJoint(flip * 3, hipY + legs * 0.5); }
@@ -183,26 +253,16 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
   }
   else if (o.pose === 'getup') { legJoint(dirX * 2.5, hipY + legs * 0.5); legJoint(-dirX * 4.5, hipY + legs * 0.85); }
   else if (o.pose === 'whiff') { legJoint(flip * 3, hipY + legs * 0.55); legJoint(-flip * 4, hipY + legs * 0.8); }
-  else if (o.pose === 'shuffle') {
-    // Muhammad Ali shuffle: light bounce, feet stay under the hips,
-    // small forward/back slides along the facing, heels lifting alternately
-    const bt = o.time * 8.5;
-    const sw2 = Math.sin(bt), cw2 = Math.cos(bt);
-    const stance = legs * 0.26;
-    const leadF = flip * stance + sw2 * 0.7;
-    const rearF = -flip * stance * 0.85 - sw2 * 0.7;
-    const leadL = legs * 0.74 - Math.max(0, cw2) * 0.1;
-    const rearL = legs * 0.78 - Math.max(0, -cw2) * 0.1;
-    legJoint(leadF, hipY + leadL);
-    legJoint(rearF, hipY + rearL);
+  else if (o.pose === 'brake') {
+    // ANIME SKID: kaki depan ngerem nancep jauh ke depan, kaki belakang nyeret ngangkat tumit,
+    // lutut ditekuk dalam, badan condong mundur (lihat lean + translate di atas)
+    const k = clamp01(o.t);
+    gaitLeg(gux * (2.2 + 3.8 * k) * GS, groundY + guy * (2.2 + 3.8 * k) * GS * GAIT_DEPTH - 0.2 * GS * k, k * 1.4 * GS, gux, guy);
+    gaitLeg(-gux * (2.4 + 2.8 * k) * GS + gsx * 0.9 * flip, groundY - guy * (2.4 + 2.8 * k) * GS * GAIT_DEPTH - 1.3 * GS * k, 0.6 * GS * k, gux, guy);
   }
-  else {
-    const legW = (ph: number) => {
-      const lift = Math.max(0, Math.cos(ph)) * legs * 0.16;
-      legJoint(Math.sin(ph) * 1.8, hipY + legs * 0.76 - lift);
-    };
-    legW(o.walk); legW(o.walk + Math.PI);
-  }
+  else if (o.pose === 'shuffle') { idleLegs(); }
+  else if (stepping) { gaitLegs(); }
+  else { idleLegs(); }
 
   // ---------- BODY ----------
   const topX = lean * body + (atk === 'CROSS' ? dirX * sc * 1.5 : 0);
@@ -357,6 +417,7 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
         case 'OVERHEAD': return o.facing + swp(uu, -3.1, 0.35, 0.34);
         case 'SPIN IAI': return o.facing + uu * TAU * 1.1;
         case 'THRUST': case 'RIPOSTE': return o.facing;
+        case 'SHEATHE FLASH': return o.facing + swp(uu, 1.2, -2.6, 0.26);
         default: return o.facing + swp(uu, 2.5, -1.3);
       }
     };
@@ -451,7 +512,7 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
       const gp = (Math.sin(o.time * 7) + 1) / 2, gq = B(4 + gp * (BLADE - 8));
       px(ctx, gq[0] - 1.8, gq[1] - 0.8, 3.6, 1.6, '#ffffff');
     }
-  } else if (o.pose === 'attack' && atk === 'CHAIN') {  } else if (o.pose === 'attack' && atk === 'CHAIN') {  } else if (o.pose === 'attack' && atk === 'CHAIN') {
+  } else if (o.pose === 'attack' && atk === 'CHAIN') {
     // Wing Chun: alternating centerline punches at blinding speed
     const alt = Math.floor(o.time * 16) % 2 === 0 ? 1 : -1;
     const perpX = -dirY * alt, perpY = dirX * alt;
@@ -547,7 +608,7 @@ function drawStickInner(ctx: CanvasRenderingContext2D, x: number, y: number, o: 
       px(ctx, tipX - 2, tipY - 2, 4, 4, b_accent(o));
       if (u2 > 0.22 && u2 < 0.85) { px(ctx, tipX - 4, tipY - 0.8, 8, 1.6, '#fff'); px(ctx, tipX - 0.8, tipY - 4, 1.6, 8, '#fff'); }
     }
-  } else if (o.pose === 'attack' && !isKickAtk && o.weapon !== 4 && o.weapon !== 5 && o.weapon !== 6 && o.weapon !== 7 && o.weapon !== 8) {  } else if (o.pose === 'attack' && !isKickAtk && o.weapon !== 4 && o.weapon !== 5 && o.weapon !== 6 && o.weapon !== 7 && o.weapon !== 8) {
+  } else if (o.pose === 'attack' && !isKickAtk && o.weapon !== 4 && o.weapon !== 5 && o.weapon !== 6 && o.weapon !== 7 && o.weapon !== 8) {
     let pt: (uu: number) => { x: number; y: number };
     switch (atk) {
       case 'CROSS': pt = (uu) => { const e = -4 + uu * 17; return { x: sx + dirX * e, y: sy + fy * e - 1 - uu * 1.5 }; }; break;
@@ -1195,16 +1256,20 @@ function drawCorpse(ctx: CanvasRenderingContext2D, c: import('./game').Corpse, g
 }
 function drawPlayer(ctx: CanvasRenderingContext2D, p: Player, g: Game) {
   if (g.phase === 'dead') return;
-  const blink = p.iframes > 0 && p.hurtT <= 0 && p.state !== 'dash' && p.state !== 'kick' && p.state !== 'takedown' && p.state !== 'sweep' && Math.floor(g.time * 30) % 2 === 0;
+  const blink = p.iframes > 0 && p.hurtT <= 0 && p.state !== 'dash' && p.state !== 'kick' && p.state !== 'takedown' && p.state !== 'sweep' && !p.focusDash && !p.rageDash && Math.floor(g.time * 30) % 2 === 0;
   if (blink) return;
   let pose: string = p.state; let t = p.stateT; let atk: string | undefined;
-  if (p.state === 'ragecharge') { pose = 'crouch'; t = 0.4 + Math.sin(g.time * 30) * 0.1; }
+  // mid blur-dash (FOCUS / RAGE) the body is already in the strike pose
+  const blur = p.focusDash ?? p.rageDash;
+  if (blur) { pose = 'attack'; atk = blur.atk.name; t = 0.42 + Math.min(1, blur.t) * 0.16; }
+  else if (p.state === 'ragecharge') { pose = 'crouch'; t = 0.4 + Math.sin(g.time * 30) * 0.1; }
   else if (p.state === 'ofapose') { pose = 'attack'; atk = 'DRAGON PALM'; t = 0.15; }
   else if (p.state === 'iaidash') { pose = 'attack'; atk = 'THRUST'; t = 0.55; }
   else if (p.state === 'axerush') { pose = 'attack'; atk = 'OVERHEAD CHOP'; t = (p.stateT * 2.4) % 1; }
   else if (p.state === 'bladerush') { pose = 'attack'; atk = Math.floor(p.stateT * 8) % 2 ? 'L SLASH' : 'R SLASH'; t = 0.5; }
   else if (p.state === 'nunrush') { pose = 'attack'; atk = 'NUN SPIN'; t = (p.stateT * 2.5) % 1; }
   else if (p.state === 'tkdkick') { const tt = p.stateT / 0.52; pose = tt < 0.16 || tt >= 0.8 ? 'crouch' : 'sidekick'; t = tt; }
+  else if (p.state === 'idle' && p.brakeT > 0 && p.z === 0 && Math.hypot(p.vx, p.vy) < 80) { pose = 'brake'; t = Math.min(1, p.brakeT / 0.35); }
   else if (p.state === 'idle' && Math.hypot(p.vx, p.vy) < 25 && p.z === 0 && p.chargeT <= 0.15) pose = 'shuffle';
   else if (p.state === 'airkick') pose = 'sidekick';
   else if (p.state === 'idle' && p.whiff > 0.05) pose = 'whiff';
@@ -1280,6 +1345,8 @@ function drawPlayer(ctx: CanvasRenderingContext2D, p: Player, g: Game) {
   }
   drawStick(ctx, p.x, yy, {
     color: p.hurtT > 0 ? '#ff3b3b' : SKINS[g.skinIndex].body, skinBand: SKINS[g.skinIndex].band, accent: g.lvl.biome.accent, facing: p.facing, walk: p.walk, pose, t, atk, nunAng, moveAng: p.legAng, rot: rotP,
+    // legs only (game2 gait): real travel state, sprint blend for the animation, half step in px
+    moving: Math.hypot(p.vx, p.vy) > 5, run: Math.min(1, p.sprint / 0.25), stride: p.strideHalf,
     scale: 1, headR: 4 * (g.bodyScale ? 0.9 : 1), body: 4 * G_BS, legs: 3 * G_LS, thick: g.bodyScale ? 2.1 : 1.5, sqx: p.sqx, sqy: p.sqy, weapon: ['idle', 'block', 'attack', 'takedown', 'vault', 'lancerush'].includes(p.state) ? p.weapon : p.weapon === 3 || p.weapon === 4 || p.weapon === 7 || p.weapon === 8 ? p.weapon : 0, kind: 'player', time: g.time,
   });
 }
@@ -1299,7 +1366,7 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy, g: Game) {
   const wuT = e.state === 'windup' ? Math.min(1, e.stateT / e.def.windup) : 0;
   const flashW = e.state === 'windup' && wuT > 0.7 && Math.floor(g.time * 25) % 2 === 0;
   if (e.kind !== 'boss' && e.state === 'attack' && pose === 'attack') { /* enemy punches use JAB anim */ }
-  drawStick(ctx, e.x, e.y + 2 - e.z, { color: col, accent: b.accent, facing: e.facing, walk: e.walk, pose, react: e.react, reactAng: e.reactAng, moveAng: e.moveAng, t: pose === 'attack' ? Math.min(1, 0.3 + e.stateT * 2.5) : e.stateT, atk: e.kind === 'samurai' ? 'DRAW CUT' : e.kind === 'brute' || e.kind === 'boss' ? 'HOOK' : 'JAB', weapon: e.kind === 'samurai' ? 4 : undefined, rot: e.rot, scale: s.scale * (e.elite ? 1.12 : 1), headR: s.hr * (g.bodyScale ? 0.9 : 1), body: s.body * G_BS, legs: s.legs * G_LS, thick: s.thick * (g.bodyScale ? 1.4 : 1), sqx: e.sqx, sqy: e.sqy, kind: e.kind, flash: e.flash > 0 || flashW, time: g.time, bossWeap: BOSS_WEAPON[e.bossStyle] });
+  drawStick(ctx, e.x, e.y + 2 - e.z, { color: col, accent: b.accent, facing: e.facing, walk: e.walk, pose, react: e.react, reactAng: e.reactAng, moveAng: e.moveAng, moving: e.walking, stride: e.strideHalf, t: pose === 'attack' ? Math.min(1, 0.3 + e.stateT * 2.5) : e.stateT, atk: e.kind === 'samurai' ? 'DRAW CUT' : e.kind === 'brute' || e.kind === 'boss' ? 'HOOK' : 'JAB', weapon: e.kind === 'samurai' ? 4 : undefined, rot: e.rot, scale: s.scale * (e.elite ? 1.12 : 1), headR: s.hr * (g.bodyScale ? 0.9 : 1), body: s.body * G_BS, legs: s.legs * G_LS, thick: s.thick * (g.bodyScale ? 1.4 : 1), sqx: e.sqx, sqy: e.sqy, kind: e.kind, seed: e.id * 1.7, flash: e.flash > 0 || flashW, time: g.time, bossWeap: BOSS_WEAPON[e.bossStyle] });
   if (e.reloading > 0) text(ctx, 'RELOAD', e.x, e.y - s.legs - s.body - s.hr * 2 - 9, 5, Math.floor(g.time * 6) % 2 ? '#ddd' : '#888', 'center');
   if (e.state === 'windup' && isRanged) {
     const pr = Math.min(1, e.stateT / e.def.windup);
@@ -1320,8 +1387,14 @@ function drawHUD(ctx: CanvasRenderingContext2D, g: Game, rt: number) {
   if (p.hp / m.maxHp < 0.3 && g.phase === 'playing') { const a = 0.25 + Math.sin(rt * 6) * 0.1; const gr = ctx.createRadialGradient(VW / 2, VH / 2, VH * 0.4, VW / 2, VH / 2, VH * 0.8); gr.addColorStop(0, 'rgba(255,40,40,0)'); gr.addColorStop(1, `rgba(255,40,40,${a})`); ctx.fillStyle = gr; ctx.fillRect(0, 0, VW, VH); }
   // flash
   if (g.flash > 0) { ctx.globalAlpha = Math.min(0.85, g.flash); ctx.fillStyle = g.flashColor; ctx.fillRect(0, 0, VW, VH); ctx.globalAlpha = 1; }
-  // slow-mo letterbox
-  if (g.timeScale < 0.8) { const h = (1 - g.timeScale) * 18; px(ctx, 0, 0, VW, h, '#000'); px(ctx, 0, VH - h, VW, h, '#000'); }
+  // slow-mo letterbox — game2's curve: bars grow as time slows, plus fixed cinematic bars mid blur-dash
+  {
+    const pl = g.player, cine = !!(pl.focusDash || pl.rageDash);
+    if (g.timeScale < 0.75 || cine) {
+      const h = cine ? 18 : Math.round((0.75 - g.timeScale) * 40);
+      px(ctx, 0, 0, VW, h, '#000'); px(ctx, 0, VH - h, VW, h, '#000');
+    }
+  }
 
   // HP bar
   const hx = 8, hy = 8, hw = 90;
@@ -1343,7 +1416,7 @@ function drawHUD(ctx: CanvasRenderingContext2D, g: Game, rt: number) {
     if (f >= 1) px(ctx, -3, -3, 6, 1, '#fff');
     ctx.restore();
   }
-  text(ctx, 'FOCUS', hx + 46, hy + 20, 6, '#888');
+  text(ctx, 'Q/E', hx + 46, hy + 20, 6, '#888');
   // RAGE meter
   {
     const ry = hy + 31, rw = 70;
@@ -1363,6 +1436,18 @@ function drawHUD(ctx: CanvasRenderingContext2D, g: Game, rt: number) {
     if (of >= 1) px(ctx, hx, oy, ow, 1, '#c8fbff');
     text(ctx, 'OFA', hx + ow + 4, oy - 1, 6, p.ofaActive ? '#57e6ff' : '#888');
     if (!p.ofaActive && p.ofa >= 25) text(ctx, 'X!', hx + ow + 22, oy - 1, 6, Math.floor(rt * 6) % 2 ? '#57e6ff' : '#fff');
+  }
+  // FOCUS meter (game2's FOCUS system): 300 max, 100 per Focus Strike, spent with C
+  {
+    const fy = hy + 53, fw = 70;
+    const ff = Math.max(0, Math.min(1, p.focusMeter / 300));
+    const ready = p.focusMeter >= 100;
+    px(ctx, hx - 1, fy - 1, fw + 2, 6, '#000c'); px(ctx, hx, fy, fw, 4, '#0a1410');
+    px(ctx, hx, fy, Math.round(fw * ff), 4, p.focusDash ? (Math.floor(rt * 12) % 2 ? b.accent : '#ffffff') : ready ? b.accent : '#2f6b52');
+    px(ctx, hx + Math.round(fw / 3), fy, 1, 4, '#0009');            // notch = one strike's cost
+    if (ready) px(ctx, hx, fy, fw, 1, '#ffffff');
+    text(ctx, 'FOCUS', hx + fw + 4, fy - 1, 6, ready ? b.accent : '#888');
+    if (ready && !p.focusDash) text(ctx, 'C!', hx + fw + 30, fy - 1, 6, Math.floor(rt * 6) % 2 ? '#fff' : b.accent);
   }
   // weapon
   const wnames = ['FISTS', 'PISTOL', 'RIFLE', 'NUNCHAKU', 'KATANA', 'AXE', 'DUAL', 'STAFF', 'SANADA'];

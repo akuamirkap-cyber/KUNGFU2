@@ -7,6 +7,8 @@ export interface StickOpts {
   walk: number; moving: boolean; pose: Pose; t: number; acc: string; weapon: string;
   flash: boolean; alpha: number; outline: string | null; eyes: string; time: number; lean: Vec;
   rot?: number; recoil?: number; trail?: string | null; z?: number; run?: number; squash?: number;
+  /** juicy squash & stretch (game1 feel): scale the whole skeleton around the feet. 1 = neutral. */
+  sqx?: number; sqy?: number;
   blink?: boolean; mood?: 'normal' | 'angry' | 'hurt' | 'happy' | 'dead';
   /** chain punch: which fist is out this link (+1 front, -1 back) */
   chainSide?: number;
@@ -20,6 +22,16 @@ export interface StickOpts {
   stride?: number;
   /** where the eyes look (defaults to aim) */
   look?: number;
+  /** V2 nunchaku: weld the front palm to this WORLD point (the chain grip); the elbow re-solves by IK */
+  handOverride?: Vec;
+  /** V2 anime legs: ready-bounce idle (knee spring, weight shift, mini-hop shuffle) */
+  anime?: boolean;
+  /** V2 anime brake: 0..1 skid pose progress (wide braced stance, low hip, lean back) */
+  brake?: number;
+  /** per-entity phase seed so idle bounces don't sync across a crowd */
+  seed?: number;
+  /** LONG-LIMB mode: panjang badan/tangan/kaki dikali faktor ini (skala seragam dari telapak kaki). 1 = normal. */
+  limbScale?: number;
 }
 
 export interface Skeleton {
@@ -191,10 +203,32 @@ export function solvePose(o: StickOpts): Skeleton {
       bhand = add(neck, fwd(ba * amp), V(0, hy - Math.max(0, ba) * 1.2 * run * s), side(-0.8 * f));
     }
   } else if (o.pose === 'idle') {
-    const br = Math.sin(o.time * 4) * 0.4 * s;
+    const sd = o.seed ?? 0;
+    const bt = o.time * 3.6 + sd;
+    // V2 anime READY BOUNCE: knee spring + weight shift + heel lift + mini-hop shuffle tiap ~3.2s
+    const bounce = o.anime ? Math.sin(bt) : 0;
+    const shift = o.anime ? Math.sin(bt * 0.5) * 0.8 : 0;
+    const cyc = (o.time + sd * 0.37) % 3.2;
+    const shuf = o.anime && cyc > 2.85 ? Math.sin((cyc - 2.85) / 0.35 * Math.PI) : 0;
+    const br = (Math.sin(o.time * 4) * 0.4 + bounce * 0.8) * s;
     neck.y += br; head.y += br;
     fhand = add(neck, D(3.2), V(0, (1.2 + br * 0.3) * s)); bhand = add(neck, D(0.6), V(0, 1.4 * s), P(-1.2 * f));
-    ffoot = V(2.4 * s * f, 0); bfoot = V(-2 * s * f, 0);
+    const heel = Math.max(0, bounce) * 1.2 * s;
+    ffoot = V((2.4 + shift + shuf * 1.5) * s * f, -shuf * 2.2 * s);
+    bfoot = V((-2 - shift - shuf * 1.5) * s * f, -heel);
+    if (shuf > 0) kneeUp = shuf * 1.6 * s;
+    const brk = o.brake ?? 0;
+    if (brk > 0) {
+      // V2 ANIME BRAKE: kaki depan nancep ngerem, kaki belakang nyeret tumit naik, pinggul turun, tangan nyabet ke belakang
+      const vd = o.vel && (Math.abs(o.vel.x) + Math.abs(o.vel.y) > 0.01) ? o.vel : { x: Math.cos(o.aim), y: Math.sin(o.aim) };
+      const vl = Math.hypot(vd.x, vd.y) || 1, ux = vd.x / vl, uy = vd.y / vl;
+      hip.y += brk * 1.5 * s; neck.y += brk * 1.1 * s; head.y += brk * 0.9 * s;
+      fhand = add(fhand, V(-ux * brk * 2.6 * s, -uy * brk * 1.6 * s - brk * 1.1 * s));
+      bhand = add(bhand, V(-ux * brk * 2.2 * s, -uy * brk * 1.4 * s - brk * 0.9 * s));
+      ffoot = V(ux * (2.2 + 3.6 * brk) * s, uy * (2.2 + 3.6 * brk) * s * 0.6);
+      bfoot = V(-ux * (2.4 + 2.6 * brk) * s, -uy * (2.4 + 2.6 * brk) * s * 0.6 - brk * 1.3 * s);
+      kneeUp = brk * 1.2 * s; fkneeBend = -f; bkneeBend = -f;
+    }
   }
 
   switch (o.pose) {
@@ -1153,6 +1187,50 @@ export function solvePose(o: StickOpts): Skeleton {
       fhand = add(neck, L(-2.5), V(s, 2 * s)); bhand = add(neck, L(-2.5), V(-s, 2 * s));
       break;
     }
+    case 'broken': {
+      // game1-style downed slump: half-sitting, hands propping, legs splayed, pain sway
+      const w = Math.sin(o.time * 6) * 0.5 * s;
+      hip = V(0, -1.6 * s); neck = V(-f * 1.2 * s + w * 0.4, -3.4 * s); head = V(-f * 1.8 * s + w, -4.6 * s);
+      fhand = V(-f * 3.2 * s + w, -0.4 * s); bhand = V(f * 1.4 * s, -0.6 * s);
+      ffoot = V(f * 3.4 * s, 0); bfoot = V(f * 1.6 * s + w * 0.5, -0.8 * s);
+      break;
+    }
+    case 'curled': {
+      // fetal on the side: knees tucked, arms guarding the head
+      hip = V(0, -1.4 * s); neck = V(f * 1.6 * s, -2.2 * s); head = V(f * 2.6 * s, -3 * s);
+      ffoot = V(f * 1.8 * s, -0.6 * s); bfoot = V(f * 0.8 * s, -1.2 * s);
+      fhand = V(f * 2.2 * s, -2.6 * s); bhand = V(f * 1.2 * s, -1.6 * s);
+      break;
+    }
+    case 'getup': {
+      // pushing up off the floor: one knee under, hands down, head rising (game1 getup)
+      hip = V(0, -2.6 * s); neck = V(f * 1.8 * s, -4.2 * s); head = V(f * 2.6 * s, -5.4 * s);
+      fhand = V(f * 3.4 * s, -0.4 * s); bhand = V(f * 0.6 * s, -0.2 * s);
+      ffoot = V(-f * 1.6 * s, 0); bfoot = V(-f * 3.2 * s, -1.4 * s);
+      break;
+    }
+    case 'fly': {
+      // game1-style airborne flail: arms windmill in circles, legs paddle — a tumbling
+      // body reads as ragdoll instead of a spinning plank
+      const w1 = o.time * 17, w2 = w1 + 2.4;
+      hip = V(0, -3.2 * s); neck = V(f * 2.2 * s, -4.2 * s); head = V(f * 3.6 * s, -5.2 * s);
+      fhand = V(neck.x + Math.cos(w1) * 3.4 * s, neck.y + Math.sin(w1) * 3.4 * s);
+      bhand = V(neck.x + Math.cos(w2) * 3.4 * s, neck.y + Math.sin(w2) * 3.4 * s);
+      const k1 = Math.sin(o.time * 15) * 1.4 * s;
+      ffoot = V(-f * 3.2 * s, -1.6 * s + k1); bfoot = V(-f * 4.4 * s, -3 * s - k1);
+      break;
+    }
+    case 'knock': {
+      // game1-style knocked ragdoll: flopped backwards, limbs flailing (wobble via o.time),
+      // reads as a funny crumpled body instead of a flat plank
+      const tw = Math.sin(o.time * 22) * 0.8 * s;
+      hip = V(-f * 1 * s, -2 * s);
+      neck = V(-f * 4 * s, -3.2 * s);
+      head = V(-f * 6.5 * s, -3.6 * s);
+      ffoot = V(f * 3.5 * s, -2.2 * s + tw * 0.5); bfoot = V(f * 2 * s, -0.6 * s - tw * 0.5);
+      fhand = V(-f * 2.5 * s, -5.2 * s + tw); bhand = V(-f * 5.5 * s, -1.2 * s - tw);
+      break;
+    }
     case 'down': {
       const b = -f;
       hip = V(0, -2 * s); neck = V(b * 4 * s, -2 * s); head = V(b * 7 * s, -2.5 * s);
@@ -1175,6 +1253,8 @@ export function solvePose(o: StickOpts): Skeleton {
     const R = (v: Vec): Vec => V(cx + (v.x - cx) * cs - (v.y - cy) * sn, cy + (v.x - cx) * sn + (v.y - cy) * cs);
     hip = R(hip); neck = R(neck); head = R(head); ffoot = R(ffoot); bfoot = R(bfoot); fhand = R(fhand); bhand = R(bhand);
   }
+  const ls = o.limbScale ?? 1;
+  if (o.handOverride) { const il = 1 / ls; fhand = V((o.handOverride.x - o.x) * il, (o.handOverride.y - o.y + (o.z ?? 0)) * il); }
   const legLen = 5.2 * s, armLen = 5.2 * s;
   if (kneeDir) {
     // choose the bend side so the knee points along the movement direction
@@ -1192,6 +1272,18 @@ export function solvePose(o: StickOpts): Skeleton {
   const bknee = bendJoint(hip, bfoot, legLen, bkneeBend, kneeUp * 0.6);
   const felbow = s >= 1.4 ? bendJoint(neck, fhand, armLen, -f) : null;
   const belbow = s >= 1.4 ? bendJoint(neck, bhand, armLen, f) : null;
+  if (ls !== 1) {
+    // LONG-LIMB mode: seluruh skeleton diskalakan seragam dari telapak kaki (0,0) — badan,
+    // tangan, kaki jadi ls kali panjang normal (radius kepala di drawSkeleton tidak ikut).
+    // Transformasi serupa (similar) jadi bentuk tekukan lutut/siku otomatis tetap benar; kaki tetap napak.
+    const M = (v: Vec): Vec => V(v.x * ls, v.y * ls);
+    const MN = (v: Vec | null): Vec | null => (v ? M(v) : null);
+    return {
+      hip: M(hip), neck: M(neck), head: M(head), ffoot: M(ffoot), bfoot: M(bfoot), fhand: M(fhand), bhand: M(bhand),
+      fknee: MN(fknee), bknee: MN(bknee), felbow: MN(felbow), belbow: MN(belbow),
+      trail: trail ? { cx: trail.cx * ls, cy: trail.cy * ls, rx: trail.rx * ls, ry: trail.ry * ls, from: trail.from, to: trail.to } : null,
+    };
+  }
   return { hip, neck, head, ffoot, bfoot, fhand, bhand, fknee, bknee, felbow, belbow, trail };
 }
 
@@ -1203,6 +1295,12 @@ export function drawSkeleton(ctx: Ctx, o: StickOpts, sk: Skeleton) {
   const hr = Math.max(2, Math.round(3 * s));
   const X = o.x, Y = o.y - (o.z ?? 0);
   const { hip, neck, head, ffoot, bfoot, fhand, bhand, fknee, bknee, felbow, belbow, trail } = sk;
+  // squash & stretch: squeeze the skeleton around the feet so impacts read as weight
+  const qsx = o.sqx ?? 1, qsy = o.sqy ?? 1;
+  if (qsx !== 1 || qsy !== 1) {
+    const q = (v: Vec | null) => { if (v) { v.x *= qsx; v.y *= qsy; } };
+    q(hip); q(neck); q(head); q(ffoot); q(bfoot); q(fhand); q(bhand); q(fknee); q(bknee); q(felbow); q(belbow);
+  }
   ctx.globalAlpha = o.alpha;
   if (trail && o.trail) {
     ctx.globalAlpha = o.alpha * 0.5;

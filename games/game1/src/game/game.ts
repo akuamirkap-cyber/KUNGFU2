@@ -7,13 +7,15 @@ export type Phase = 'title' | 'playing' | 'upgrade' | 'dead' | 'win' | 'paused' 
 
 export interface Attack { name: string; dmg: number; range: number; arc: number; dur: number; lunge: number; kb: number; posture: number; heavy?: boolean; kick?: boolean }
 export const COMBO: Attack[] = [
-  { name: 'JAB', dmg: 8, range: 20, arc: 1.7, dur: 0.17, lunge: 55, kb: 60, posture: 9 },
-  { name: 'CROSS', dmg: 10, range: 22, arc: 1.7, dur: 0.19, lunge: 65, kb: 80, posture: 11 },
-  { name: 'HOOK', dmg: 13, range: 22, arc: 2.5, dur: 0.21, lunge: 60, kb: 110, posture: 15 },
-  { name: 'ROUNDHOUSE', dmg: 20, range: 27, arc: 3.2, dur: 0.3, lunge: 80, kb: 240, posture: 28, heavy: true, kick: true },
-  { name: 'ELBOW', dmg: 15, range: 20, arc: 1.9, dur: 0.19, lunge: 70, kb: 130, posture: 17 },
-  { name: 'SPIN KICK', dmg: 22, range: 29, arc: 3.8, dur: 0.3, lunge: 50, kb: 220, posture: 28, heavy: true, kick: true },
-  { name: 'DRAGON PALM', dmg: 34, range: 26, arc: 1.5, dur: 0.34, lunge: 110, kb: 360, posture: 45, heavy: true },
+  // combo dasar 5 hit: jab-cross-hook-sikut, ROUNDHOUSE jadi finisher (kick lebih jarang),
+  // knockback diperkecil biar musuh mentalnya dekat dan combo gampang disambung lagi
+  { name: 'JAB', dmg: 8, range: 20, arc: 1.7, dur: 0.17, lunge: 55, kb: 28, posture: 9 },
+  { name: 'CROSS', dmg: 10, range: 22, arc: 1.7, dur: 0.19, lunge: 65, kb: 40, posture: 11 },
+  { name: 'HOOK', dmg: 13, range: 22, arc: 2.5, dur: 0.21, lunge: 60, kb: 58, posture: 15 },
+  { name: 'ELBOW', dmg: 15, range: 20, arc: 1.9, dur: 0.19, lunge: 70, kb: 80, posture: 17 },
+  { name: 'ROUNDHOUSE', dmg: 20, range: 27, arc: 3.2, dur: 0.3, lunge: 80, kb: 115, posture: 18, heavy: true, kick: true },
+  { name: 'SPIN KICK', dmg: 22, range: 29, arc: 3.8, dur: 0.3, lunge: 50, kb: 130, posture: 24, heavy: true, kick: true },
+  { name: 'DRAGON PALM', dmg: 34, range: 26, arc: 1.5, dur: 0.34, lunge: 110, kb: 200, posture: 45, heavy: true },
 ];
 
 export const NUNCHAKU: Attack[] = [
@@ -42,7 +44,7 @@ export const DUAL: Attack[] = [
   { name: 'DUAL SPIN', dmg: 8, range: 28, arc: 6.3, dur: 0.27, lunge: 32, kb: 110, posture: 12 },
   { name: 'TWIN FANG', dmg: 15, range: 29, arc: 2.2, dur: 0.2, lunge: 95, kb: 210, posture: 18, heavy: true },
 ];
-export const CHAIN_ATK: Attack = { name: 'CHAIN', dmg: 4.5, range: 26, arc: 2.0, dur: 0.105, lunge: 110, kb: 45, posture: 7 };
+export const CHAIN_ATK: Attack = { name: 'CHAIN', dmg: 5, range: 26, arc: 2.0, dur: 0.09, lunge: 110, kb: 30, posture: 7 };
 export const STAFF: Attack[] = [
   { name: 'STAFF JAB', dmg: 10, range: 32, arc: 1.9, dur: 0.15, lunge: 85, kb: 120, posture: 16 },
   { name: 'STAFF SWING', dmg: 12, range: 32, arc: 3.4, dur: 0.165, lunge: 60, kb: 175, posture: 18 },
@@ -66,10 +68,19 @@ export interface Player {
   x: number; y: number; vx: number; vy: number; r: number;
   hp: number; guard: number; focus: number; weapon: number; ammoP: number; ammoR: number;
   state: PState; stateT: number; attackIdx: number; comboTimer: number; facing: number; moveAng: number; moving: boolean;
+  /** anime brake: skid pose timer + cooldown + last-frame speed (stop-from-sprint detection) */
+  brakeT: number; brakeCd: number; prevSpd: number;
+  /** katana chain variatif: rencana jumlah tebas (1/2/3) + tebasan yang sudah jalan */
+  katPlan: number; katStep: number;
   dashCd: number; dashAng: number; iframes: number; gunCd: number; hurtT: number; walk: number;
   didHit: boolean; buffered: boolean; curAttack: Attack | null; sqx: number; sqy: number; target: Enemy | null;
   parryHit: boolean; recoil: number; stunT: number; z: number; vz: number; tdkCd: number; kickHits: number[]; fatality: string; fatT: number; sprint: number; sprintHold: number; sprintMem: number; chargeT: number; riposteT: number; riposteTarget: Enemy | null; airChain: number; airHitId: number; fatBuffer: number; legAng: number; bank: number; fkRange: number; px0: number; py0: number; stepT: number; fkTarget: number; rageCharge: number; ofaPose: number; ofaReal: boolean; twist: number; whiff: number; arcT: number;
-  chainMode: boolean; chainHits: number; chainTimer: number; chainFinal: boolean; clicks: number[]; rage: number; raging: boolean; flurryN: number; flurryTarget: Enemy | null; ofa: number; ofaActive: boolean; lockTarget: Enemy | null;
+  chainMode: boolean; chainHits: number; chainTimer: number; chainFinal: boolean; clicks: number[]; swingAim?: number; rage: number; raging: boolean; flurryN: number; flurryTarget: Enemy | null; ofa: number; ofaActive: boolean; lockTarget: Enemy | null;
+  /** game2-style FOCUS resource (0..300, 100 per Focus Strike). Separate from the 3 focus PIPS above,
+   *  which still gate Q (kick) and E (sweep) exactly as before. */
+  focusMeter: number; focusDash: BlurDash | null; rageDash: BlurDash | null;
+  /** game2 gait: half step length in px, derived from the real ground speed so a planted foot never slides */
+  strideHalf: number;
 }
 export type EState = 'chase' | 'windup' | 'attack' | 'recover' | 'stun' | 'broken' | 'knock' | 'getup' | 'dead' | 'teleport' | 'victim';
 export interface Enemy {
@@ -81,6 +92,15 @@ export interface Enemy {
   perfectDodged: boolean; name?: string; summonCd: number; spawnT: number; z: number; vz: number; rot: number; vrot: number;
   elite: boolean; slotAng: number; cunning: number; dodgeCd: number; rage: number; retreatT: number;
   mag: number; reloading: number; hasToken: boolean; nunCd: number; juggle: number; bleed: number; parryCd: number; deathSlash: number; react: number; reactAng: number; moveAng: number; disarmed: boolean; getup: number; bossStyle: string; tint: string; accentColor: string; deathSlashSplit: boolean;
+  /** game2 gait: did this enemy actually travel this frame, and how long is its half step */
+  walking: boolean; strideHalf: number;
+}
+/** game2's blur-dash (focusDash / rageDash) ported to game1: a REAL-TIME lerp from (sx,sy) to
+ *  (tx,ty) that leaves afterimages and ends in one forced heavy strike. It runs on raw seconds so
+ *  the slow motion it triggers cannot stall it. */
+export interface BlurDash {
+  sx: number; sy: number; tx: number; ty: number; t: number; dur: number;
+  tgt: Enemy | null; id: number; atk: Attack; kind: 'focus' | 'rage'; color: string;
 }
 export interface Bullet { x: number; y: number; vx: number; vy: number; r: number; dmg: number; owner: 'p' | 'e'; life: number; deflected: boolean; kind: 'pistol' | 'rifle' | 'enemy' | 'boss' }
 export interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number; color: string; kind: 'dot' | 'ring' | 'spark' | 'text' | 'slash' | 'line' | 'smoke' | 'ghost' | 'shock'; text?: string; ang?: number; arc?: number; fric: number; grav: number; scale?: number; data?: any }
@@ -89,6 +109,8 @@ const WEAPON_OF: Partial<Record<EnemyKind, string>> = { samurai: 'katana', pipes
 export interface Corpse { x: number; y: number; z: number; vx: number; vy: number; vz: number; rot: number; vrot: number; kind: EnemyKind; elite: boolean; r: number; t: number; facing: number; slashT: number; slashAng: number; sqx: number; sqy: number; nudge: number; weapon: string | null; split: boolean }
 
 const TAU = Math.PI * 2;
+/** game2's FOCUS economy: the meter caps at 300 and one Focus Strike costs 100. */
+const FOCUS_MAX = 300, FOCUS_COST = 100;
 const angDiff = (a: number, b: number) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -112,6 +134,11 @@ export class Game {
   cam = { x: 0, y: 0 };
   shake = 0; shakeX = 0; shakeY = 0; flash = 0; flashColor = '#fff'; zoom = 1; zoomT = 1;
   hitstop = 0; timeScale = 1; slowT = 0; time = 0;
+  /** game2's slow() carries a per-call factor; 0.22 is game1's classic perfect-dodge depth. */
+  slowFactor = 0.22;
+  /** last real (unscaled) frame time, so blur-dashes tick in real time even under slow motion */
+  rawDt = 1 / 60;
+  focusReadySaid = false;
   combo = 0; comboT = 0; comboPop = 0; maxCombo = 0; score = 0; kills = 0; streak = 0; streakT = 0; streakText = '';
   banner = { text: '', sub: '', t: 0 };
   upgradeChoices: Upgrade[] = [];
@@ -190,7 +217,10 @@ export class Game {
       x: 0, y: 0, vx: 0, vy: 0, r: 4.5, hp: this.mods.maxHp, guard: 0, focus: 1, weapon: 0, ammoP: 24, ammoR: 40,
       state: 'idle', stateT: 0, attackIdx: 0, comboTimer: 0, facing: 0, moveAng: 0, moving: false, dashCd: 0, dashAng: 0, iframes: 0,
       gunCd: 0, hurtT: 0, walk: 0, didHit: false, buffered: false, curAttack: null, sqx: 1, sqy: 1, target: null, parryHit: false, recoil: 0, stunT: 0, z: 0, vz: 0, tdkCd: 0, kickHits: [], fatality: '', fatT: 0, sprint: 0, sprintHold: 0, sprintMem: 0, chargeT: 0, riposteT: 0, riposteTarget: null, airChain: 0, airHitId: -1, fatBuffer: 0, legAng: 0, bank: 0, fkRange: 90, px0: 0, py0: 0, stepT: 0, fkTarget: -1, rageCharge: 0, ofaPose: 0, ofaReal: false, twist: 0, whiff: 0, arcT: 0,
+      brakeT: 0, brakeCd: 0, prevSpd: 0, katPlan: 0, katStep: 0,
       chainMode: false, chainHits: 0, chainTimer: 0, chainFinal: false, clicks: [], rage: 0, raging: false, flurryN: 0, flurryTarget: null, ofa: 0, ofaActive: false, lockTarget: null,
+      focusMeter: 0, focusDash: null, rageDash: null,
+      strideHalf: 3,
     };
   }
 
@@ -253,6 +283,7 @@ export class Game {
       hitPlayer: false, burst: 0, burstT: 0, pattern: '', sqx: 1, sqy: 1, strafe: Math.random() < 0.5 ? 1 : -1, stuckT: 0, perfectDodged: false, summonCd: 8, spawnT: initial ? 0 : 0.4, z: 0, vz: 0, rot: 0, vrot: 0,
       elite, slotAng: (this.nextId * 2.399963) % TAU, cunning: Math.random(), dodgeCd: 0, rage: 0, retreatT: -99,
       mag: kind === 'gunner' ? 4 : kind === 'rifleman' ? 6 : kind === 'smg' ? 12 : kind === 'sniper' ? 1 : 0, reloading: 0, hasToken: false, nunCd: 0, juggle: 0, bleed: 0, parryCd: 0, deathSlash: -1, react: 0, reactAng: 0, moveAng: 0, disarmed: false, getup: 0, bossStyle: '', tint: '', accentColor: '', deathSlashSplit: false,
+      walking: false, strideHalf: 3,
     };
     if (elite) e.r *= 1.2;
     e.moveAng = e.facing;
@@ -654,7 +685,7 @@ export class Game {
   // ============ FX ============
   addShake(n: number) { this.shake = Math.min(5, this.shake + n * 0.55); }
   hitStop(t: number) { this.hitstop = Math.max(this.hitstop, t); }
-  slowMo(t: number) { this.slowT = Math.max(this.slowT, t); }
+  slowMo(t: number, factor = 0.22) { this.slowT = Math.max(this.slowT, t); this.slowFactor = factor; }
   particle(p: Partial<Particle> & { x: number; y: number }) {
     const q: Particle = { vx: 0, vy: 0, life: 0.4, max: 0.4, size: 2, color: '#fff', kind: 'dot', fric: 0.9, grav: 0, ...p };
     q.max = q.life;
@@ -687,6 +718,7 @@ export class Game {
     if (this.phase === 'dead' || this.phase === 'win') { this.updateParticles(rdt * 0.35); this.updateCorpses(rdt * 0.35); this.updateCamera(rdt); this.flash = Math.max(0, this.flash - rdt); this.zoom = lerp(this.zoom, 1.15, rdt * 2); return; }
     if (this.phase !== 'playing') return;
     rdt = Math.min(rdt, 1 / 30);
+    this.rawDt = rdt;
     this.comboPop = Math.max(0, this.comboPop - rdt * 4);
     // OFA auto-lock: nearest living enemy — recomputed even during hitstop, so it
     // jumps to the next target the very frame the current one dies
@@ -704,7 +736,7 @@ export class Game {
     }
     if (this.hitstop > 0) { this.hitstop -= rdt; this.updateCamera(rdt); this.pressed.clear(); return; }
     const ofaOn = this.player.ofaActive;
-    if (this.slowT > 0) { this.slowT -= rdt; this.timeScale = lerp(this.timeScale, 0.22, 0.5); } else if (ofaOn) this.timeScale = lerp(this.timeScale, 0.3, rdt * 9); else this.timeScale = lerp(this.timeScale, 1, rdt * 10);
+    if (this.slowT > 0) { this.slowT -= rdt; this.timeScale = lerp(this.timeScale, this.slowFactor, 0.5); } else if (ofaOn) this.timeScale = lerp(this.timeScale, 0.3, rdt * 9); else this.timeScale = lerp(this.timeScale, 1, rdt * 10);
     const dt = rdt * this.timeScale;
     this.time += dt;
     this.banner.t -= rdt; this.perfectT -= rdt; this.streakT -= rdt;
@@ -773,7 +805,11 @@ export class Game {
   // ============ PLAYER ============
   updatePlayer(dt: number, rdt = dt) {
     const p = this.player, m = this.mods, k = this.keys;
+    // FOCUS / RAGE blur-dash owns the player until it lands. It ticks on this.rawDt (REAL time) so the
+    // slow motion it triggers cannot stall it — the same convention as ofaPose.
+    if ((p.focusDash || p.rageDash) && this.updateBlurDash(this.rawDt)) return;
     p.stateT += dt; p.dashCd -= dt; p.iframes -= dt; p.comboTimer -= dt; p.gunCd -= dt; p.hurtT -= dt; p.tdkCd -= dt; p.riposteT -= dt; p.recoil = Math.max(0, p.recoil - dt * 8);
+    p.brakeT = Math.max(0, p.brakeT - dt); p.brakeCd -= dt;
     if (this.pressed.has('KeyF')) p.fatBuffer = 0.3;
     p.fatBuffer -= dt;
     // WING CHUN: detect LMB spam (clicks every 0.1-0.4s) with fists
@@ -782,7 +818,7 @@ export class Game {
       const c = p.clicks;
       if (!p.chainMode && c.length >= 3) {
         const i1 = c[c.length - 1] - c[c.length - 2], i2 = c[c.length - 2] - c[c.length - 3];
-        if (i1 > 0.05 && i1 < 0.45 && i2 > 0.05 && i2 < 0.45) { p.chainMode = true; p.chainHits = 0; p.chainTimer = 0.55; this.feedText('CHAIN PUNCH!', this.lvl.biome.accent); SFX.focus(); }
+        if (i1 > 0.03 && i1 < 0.6 && i2 > 0.03 && i2 < 0.6) { p.chainMode = true; p.chainHits = 0; p.chainTimer = 0.65; this.feedText('WING CHUN CHAIN!', this.lvl.biome.accent); SFX.focus(); }
       }
     }
     if (p.weapon !== 0 && p.chainMode) p.chainMode = false;
@@ -796,7 +832,7 @@ export class Game {
       if (p.rage <= 0) { p.rage = 0; p.raging = false; this.feedText('RAGE OVER', '#888'); }
       if (Math.random() < 0.55) this.particle({ x: p.x + (Math.random() - 0.5) * 8, y: p.y - 2, vy: -34 - Math.random() * 20, life: 0.32, size: 1.6, color: Math.random() < 0.5 ? '#ff2a2a' : '#ff7a1a', kind: 'dot', fric: 0.95 });
     }
-    if (this.pressed.has('KeyX') && !p.ofaActive && p.ofaPose <= 0 && p.ofa >= 25 && p.state !== 'takedown') {
+    if (this.pressed.has('KeyX') && !p.ofaActive && p.ofaPose <= 0 && p.ofa >= 25 && p.state !== 'takedown' && !p.focusDash && !p.rageDash) {
       p.ofaPose = 1.0; p.ofaReal = true; p.state = 'ofapose'; p.stateT = 0; p.vx = p.vy = 0;
       this.flash = 0.35; this.flashColor = '#ffffff';
       this.slowMo(1.4); this.zoomT = 1.22; SFX.ofa(); this.addShake(4);
@@ -848,7 +884,7 @@ export class Game {
         if (this.level < MAX_LEVEL) { this.text(p.x, p.y - 26, `SKIP TO ${this.level + 1}`, '#ffd166', 1, 0.8); this.completeLevel(); }
       }
     }
-    if (this.pressed.has('KeyR') && !p.raging && p.rageCharge <= 0 && p.rage >= 60 && p.state !== 'takedown') {
+    if (this.pressed.has('KeyR') && !p.raging && p.rageCharge <= 0 && p.rage >= 60 && p.state !== 'takedown' && !p.focusDash && !p.rageDash) {
       p.rageCharge = 1.25; p.state = 'ragecharge'; p.stateT = 0; p.vx = p.vy = 0;
       this.slowMo(0.3); this.zoomT = 1.16; SFX.rage(); this.addShake(3);
     }
@@ -936,6 +972,7 @@ export class Game {
     else if (canAct && this.pressed.has('KeyQ')) this.startKick();
     else if (canAct && this.pressed.has('KeyE')) this.startSweep();
     else if (canAct && (this.pressed.has('KeyF') || p.fatBuffer > 0)) { if (this.tryTakedown()) p.fatBuffer = 0; }
+    else if (canAct && this.pressed.has('KeyC')) this.tryFocusStrike();
 
     if (canAct && this.pressed.has('Space')) this.startJump();
 
@@ -948,6 +985,13 @@ export class Game {
         const rate = reversing ? 7.5 : 14; // gentler turn-around = smooth arcs, no snapping
         p.vx = lerp(p.vx, mx * spd, Math.min(1, dt * rate)); p.vy = lerp(p.vy, my * spd, Math.min(1, dt * rate));
         if (reversing && p.sprint > 0.5 && curSpd > 170 && Math.random() < 0.4) this.smoke(p.x, p.y + 2, 1, '#777');
+        // ANIME BRAKE: berhenti mendadak dari lari -> pose ngerem + debu di kaki
+        const spdNow = Math.hypot(p.vx, p.vy);
+        if (p.prevSpd > 110 && spdNow < 60 && p.z === 0 && p.brakeCd <= 0 && p.state === 'idle') {
+          p.brakeT = 0.35; p.brakeCd = 0.8;
+          this.smoke(p.x, p.y + 2, 3, '#8a7f6d');
+        }
+        p.prevSpd = Math.max(spdNow, p.prevSpd - 140 * dt); // recent top speed, meluruh ~0.55s
         // footstep smoke puffs while running
         if (curSpd > 60 && p.z === 0) {
           p.stepT -= dt * (curSpd / 60);
@@ -963,11 +1007,17 @@ export class Game {
         p.legAng += Math.abs(ld) < lmax ? ld : Math.sign(ld) * lmax;
         const sideAcc = -Math.sin(p.facing) * dvx + Math.cos(p.facing) * dvy;
         p.bank = lerp(p.bank, clamp(sideAcc * 0.0011, -0.26, 0.26) * (curSpd > 40 ? 1 : 0), Math.min(1, dt * 9));
-        if (ml > 0) {
-          p.walk += dt * 14 * (1 + 2 * p.sprint);
-          if (p.sprint > 0.5 && Math.random() < 0.4) this.particle({ x: p.x - mx * 4, y: p.y + 2, life: 0.3, size: 2, color: '#777', kind: 'smoke', vx: -mx * 20, vy: -5 });
-        }
-        if (this.pressed.has('LMB') && p.raging && p.z < 3 && p.state === 'idle') { this.startRageFlurry(); }
+        // GAME2 GAIT CADENCE: the step phase AND the half step length both follow the real ground
+        // speed (not the input), so a planted foot never slides. It is deliberately not gated on the
+        // keys: the legs keep stepping while the body glides to a stop, and hold still while airborne
+        // (game2 behaves the same). 3 steps/s at a jog up to ~5.5 steps/s at a full sprint.
+        if (p.z <= 0.01 && curSpd > 5) {
+          const stepsPerSec = 3 + 2.5 * clamp(curSpd / 160, 0, 1);
+          p.strideHalf = clamp(curSpd / (4 * stepsPerSec), 2.4, 5.6);
+          p.walk += dt * stepsPerSec * Math.PI; // 2 steps per 2PI
+        } else if (curSpd <= 5) { p.walk = 0; p.strideHalf = 0; } // standing still -> planted idle stance
+        if (ml > 0 && p.sprint > 0.5 && Math.random() < 0.4) this.particle({ x: p.x - mx * 4, y: p.y + 2, life: 0.3, size: 2, color: '#777', kind: 'smoke', vx: -mx * 20, vy: -5 });
+        if (this.pressed.has('LMB') && p.raging && p.z < 3 && p.state === 'idle') { this.startRageStrike(); }
         else if (p.weapon >= 0 && p.weapon !== 1 && p.weapon !== 2) {
           if (this.pressed.has('LMB')) {
             const sprintFull = p.sprint >= 0.85 || (p.sprintHold > 0 && p.sprintMem >= 0.85);
@@ -996,7 +1046,7 @@ export class Game {
           if (!p.didHit && t >= 0.45) { p.didHit = true; this.doNunHit(a); }
           if (this.pressed.has('LMB') && t > 0.3) p.buffered = true;
           if (t >= 1) {
-            p.attackIdx = (p.attackIdx + 1) % NUNCHAKU.length; p.comboTimer = 0.75; p.state = 'idle'; p.stateT = 0;
+            p.attackIdx = (p.attackIdx + 1) % NUNCHAKU.length; p.comboTimer = 1.05; p.state = 'idle'; p.stateT = 0;
             if (p.buffered) this.startAttack();
           }
           break;
@@ -1006,7 +1056,13 @@ export class Game {
         // momentum: acceleration curve (anticipation -> SNAP -> follow-through)
         const mom = t < 0.14 ? 0.25 : t < 0.45 ? Math.pow((t - 0.14) / 0.31, 0.55) : Math.max(0, 1 - (t - 0.45) / 0.55) * 0.55;
         const lunge = a.lunge * 2.6 * mom;
-        if (!p.didHit) p.facing = p.ofaActive && p.lockTarget && p.lockTarget.state !== 'dead' ? Math.atan2(p.lockTarget.y - p.y, p.lockTarget.x - p.x) : Math.atan2(this.mouseWorld.y - p.y, this.mouseWorld.x - p.x);
+        if (!p.didHit) {
+          // homing aim ke kursor, DIJANGKAR ke arah awal swing: koreksi boleh sampai ±115°,
+          // tapi kalau badan sudah melewati target (overshoot) facing tidak flip 180° — anti whiff anomali
+          const wantA = p.ofaActive && p.lockTarget && p.lockTarget.state !== 'dead' ? Math.atan2(p.lockTarget.y - p.y, p.lockTarget.x - p.x) : Math.atan2(this.mouseWorld.y - p.y, this.mouseWorld.x - p.x);
+          if (p.stateT <= dt) { p.facing = wantA; p.swingAim = wantA; }
+          else if (Math.abs(angDiff(p.swingAim ?? p.facing, wantA)) < 2.0) p.facing = wantA;
+        }
         p.vx = Math.cos(p.facing) * lunge + mx * speed * 0.3; p.vy = Math.sin(p.facing) * lunge + my * speed * 0.3;
         // TORSO TWIST: the whole body rotates into the swing
         p.twist = Math.sin(Math.min(1, t * 1.2) * Math.PI) * (a.heavy ? 1 : 0.72);
@@ -1019,7 +1075,8 @@ export class Game {
         if (!p.didHit && t >= 0.3) { p.didHit = true; this.doMeleeHit(a); }
         if (this.pressed.has('LMB') && t > 0.25) p.buffered = true;
         if (t >= 1) {
-          p.attackIdx = (p.attackIdx + 1) % m.comboLen; p.comboTimer = 0.75; p.state = 'idle'; p.stateT = 0;
+          if (p.weapon === 4) { p.katStep++; if (p.katStep > p.katPlan) { p.katStep = 0; p.katPlan = 0; } }
+          p.attackIdx = (p.attackIdx + 1) % m.comboLen; p.comboTimer = 1.05; p.state = 'idle'; p.stateT = 0;
           if (p.buffered) this.startAttack();
         }
         break;
@@ -1032,6 +1089,8 @@ export class Game {
           p.state = 'idle'; p.stateT = 0;
           { this.startAttack(); p.curAttack!.lunge *= 1.9; p.curAttack!.dmg *= 1.3; p.curAttack!.kb *= 1.4; this.feedText('DASH STRIKE', this.lvl.biome.accent); }
         }
+        // katana: dash + LMB = DASH SLASH — iai dash menerobos (ala Raiden/Ninja Gaiden)
+        else if (this.pressed.has('LMB') && p.stateT > 0.06 && p.weapon === 4) { p.state = 'idle'; p.stateT = 0; this.startIaiDash(); }
         else if (p.stateT >= 0.22) { p.state = 'idle'; p.stateT = 0; }
         break;
       }
@@ -1059,16 +1118,17 @@ export class Game {
         const hitWall = this.move(p, Math.cos(p.facing) * sp * dt, 0) || this.move(p, 0, Math.sin(p.facing) * sp * dt);
         p.vx = p.vy = 0;
         if (Math.random() < 0.9) this.particle({ x: p.x, y: p.y + 2 - p.z, life: 0.22, kind: 'ghost', color: this.lvl.biome.accent, data: { facing: p.facing, pose: 'flykick' } });
-        const kickT = this.nearestInRadius(p.r + 9, p.kickHits);
+        // ANTI-ANOMALI: fly kick cuma boleh mengenai 1 orang, 1 kali, lalu langsung mendarat
+        const kickT = p.kickHits.length ? null : this.nearestInRadius(p.r + 9, p.kickHits);
         if (kickT) {
           const e = kickT;
           p.kickHits.push(e.id);
-          const n = p.kickHits.length;
-          this.hitEnemy(e, 30 + n * 4, p.facing, 420, 45, 'kick');
-          if ((e.state as EState) !== 'dead') { e.state = 'knock'; e.stateT = 0; e.vx = Math.cos(p.facing) * 420; e.vy = Math.sin(p.facing) * 420; e.z = 0.1; e.vz = 90; e.vrot = (Math.cos(p.facing) >= 0 ? 1 : -1) * 12; }
+          this.hitEnemy(e, 34, p.facing, 260, 45, 'kick');
+          if ((e.state as EState) !== 'dead') { e.state = 'knock'; e.stateT = 0; e.vx = Math.cos(p.facing) * 260; e.vy = Math.sin(p.facing) * 260; e.z = 0.1; e.vz = 64; e.vrot = (Math.cos(p.facing) >= 0 ? 1 : -1) * 8; }
           this.hitStop(0.07); this.addShake(5); SFX.kick(); this.zoomT = 1.06;
-          this.feedText(n >= 2 ? `${n}x FLYING KICK!` : 'FLYING KICK!', '#fff');
+          this.feedText('FLYING KICK!', '#fff');
           this.sparks(e.x, e.y - 5, p.facing, 2, '#fff', 160);
+          p.stateT = 0.42; // kontak -> langsung masuk fase mendarat, nggak nembus kerumunan
         }
         if (hitWall || tt >= 1) {
           p.state = 'idle'; p.stateT = 0; p.z = 0; p.sqx = 1.3; p.sqy = 0.7; p.kickHits = [];
@@ -1164,7 +1224,7 @@ export class Game {
         while (p.flurryN < 4 && p.stateT >= p.flurryN * 0.055) {
           p.flurryN++;
           const save = p.curAttack;
-          p.curAttack = { name: 'CHAIN', dmg: 7, range: 27, arc: 2.2, dur: 0.1, lunge: 0, kb: 55, posture: 9 };
+          p.curAttack = { name: 'CHAIN', dmg: 7, range: 27, arc: 2.2, dur: 0.1, lunge: 0, kb: 40, posture: 9 };
           this.doMeleeHit(p.curAttack);
           p.curAttack = save;
           p.sqx = 0.85; p.sqy = 1.15;
@@ -1252,14 +1312,14 @@ export class Game {
             if (Math.hypot(e.x - p.x, e.y - p.y) < e.r + p.r + 11) {
               p.airHitId = e.id;   // lock this victim for the whole air combo
               if (p.airChain >= 3) {
-                this.hitEnemy(e, 26, p.facing, 380, 45, 'kick', true);
+                this.hitEnemy(e, 26, p.facing, 260, 45, 'kick', true);
                 if ((e.state as EState) !== 'dead') { e.state = 'knock'; e.stateT = 0; e.vx = Math.cos(p.facing) * 200; e.vy = Math.sin(p.facing) * 200; e.z = 0.1; e.vz = -260; e.vrot = (Math.cos(p.facing) >= 0 ? 1 : -1) * 10; }
                 p.didHit = true; this.hitStop(0.09); this.addShake(6); SFX.kick();
               } else {
-                this.hitEnemy(e, 18 + p.airChain * 4, p.facing, 300, 30, 'kick', true);
+                this.hitEnemy(e, 18 + p.airChain * 4, p.facing, 220, 30, 'kick', true);
                 p.vz = Math.max(p.vz, 120); p.didHit = true; this.hitStop(0.06); this.addShake(4); SFX.kick();
                 this.feedText(p.airChain >= 2 ? 'AIR HEEL!' : 'AIR KICK!', this.lvl.biome.accent);
-                if (this.pressed.has('LMB')) { p.airChain++; p.didHit = false; if (p.airChain < 3) p.vz = 165; else { p.vz = -330; } }
+                // rantai air combo hanya maju lewat press BARU di blok atas — satu press = satu hit, nggak dobel
               }
               break;
             }
@@ -1302,13 +1362,13 @@ export class Game {
               if (Math.hypot(e.x - p.x, e.y - p.y) > e.r + p.r + 15) continue;
               p.kickHits.push(e.id);
               const launched = (e.state as EState) !== 'dead' && e.state !== 'broken' && e.kind !== 'boss';
-              this.hitEnemy(e, 26, p.facing, 520, 42, 'kick', true);
+              this.hitEnemy(e, 26, p.facing, 330, 42, 'kick', true);
               if (launched && (e.state as EState) !== 'dead') {
                 // sensible ragdoll: pushed along the kick, modest height, no wild spin
                 e.state = 'knock'; e.stateT = 0;
-                e.vx = Math.cos(p.facing) * 430; e.vy = Math.sin(p.facing) * 430;
-                e.z = 0.1; e.vz = 88;
-                e.vrot = (Math.cos(p.facing) >= 0 ? 1 : -1) * 10;
+                e.vx = Math.cos(p.facing) * 300; e.vy = Math.sin(p.facing) * 300;
+                e.z = 0.1; e.vz = 72;
+                e.vrot = (Math.cos(p.facing) >= 0 ? 1 : -1) * 8;
               }
               this.hitStop(0.06); this.addShake(3); this.zoomT = 1.05; SFX.kick();
               this.feedText('TKD FLY KICK!', '#fff');
@@ -1983,25 +2043,127 @@ export class Game {
     if (!p.chainMode) return;
     p.chainMode = false; p.chainTimer = 0;
     const hits = p.chainHits; p.chainHits = 0;
-    if (blast && hits >= 8 && p.state === 'idle' && p.weapon === 0 && p.z === 0) {
+    if (blast && hits >= 6 && p.state === 'idle' && p.weapon === 0 && p.z === 0) {
       for (const e of this.enemies) if (e.state !== 'dead' && e.state !== 'victim' && e.state !== 'teleport' && Math.hypot(e.x - p.x, e.y - p.y) < 52) { p.chainFinal = true; this.startAttack(); return; }
     }
   }
-  startRageFlurry() {
-    const p = this.player;
-    let best: Enemy | null = null, bd = 300;
-    for (const e of this.enemies) { if (e.state === 'dead' || e.state === 'victim' || e.state === 'teleport') continue; const d = Math.hypot(e.x - p.x, e.y - p.y); if (d < bd) { bd = d; best = e; } }
-    if (!best) { this.startAttack(); return; }
-    p.rage = Math.max(0, p.rage - 5);
-    const fa = Math.atan2(best.y - p.y, best.x - p.x);
-    for (let i = 1; i <= 6; i++) { const t = i / 7; this.particle({ x: p.x + (best.x - p.x) * t, y: p.y + (best.y - p.y) * t, life: 0.22, kind: 'ghost', color: '#ff5a5a', data: { facing: fa, pose: 'dash' } }); }
-    p.facing = fa;
-    const nx = best.x - Math.cos(fa) * (best.r + p.r + 2), ny = best.y - Math.sin(fa) * (best.r + p.r + 2);
-    if (!this.boxSolid(nx, ny, p.r)) { p.x = nx; p.y = ny; }
-    p.state = 'flurry'; p.stateT = 0; p.flurryN = 0; p.flurryTarget = best; p.iframes = Math.max(p.iframes, 0.12); p.didHit = false;
-    p.sqx = 1.3; p.sqy = 0.7; SFX.dash();
+  // ============================ FOCUS / RAGE BLUR-DASH ============================
+  // Ported from game2's FOCUS system: a meter that fills from landing hits, a blur-dash that crosses
+  // the gap in REAL time (so its own slow motion cannot stall it), a stun on arrival and one forced
+  // heavy strike. game1 keeps its own economy, weapons and juice.
+
+  /** The attack table for a weapon slot — the exact mapping startAttack() uses. */
+  attackTable(w = this.player.weapon): Attack[] {
+    return w === 3 ? NUNCHAKU : w === 4 ? KATANA : w === 5 ? AXE : w === 6 ? DUAL : w === 7 ? STAFF : w === 8 ? SPEAR : w === 9 ? MACHETE : COMBO;
   }
-  startAttack() {
+  /** Heavy finisher of whatever is in hand. Fists give DRAGON PALM — game2's FOCUS move. */
+  heavyOfHand(): Attack {
+    const t = this.attackTable();
+    for (let i = t.length - 1; i >= 0; i--) if (t[i].heavy) return t[i];
+    return t[t.length - 1];
+  }
+  /** Nearest enemy worth dashing at: prefers the facing arc (game2's rule), then falls back to
+   *  anything slightly wider so the button is never dead. */
+  nearestStrikeTarget(range: number, arc: number): Enemy | null {
+    const p = this.player;
+    let best: Enemy | null = null, bd = Infinity, bestAny: Enemy | null = null, bdAny = Infinity;
+    for (const e of this.enemies) {
+      if (e.state === 'dead' || e.state === 'victim' || e.state === 'teleport' || e.state === 'broken') continue;
+      const d = Math.hypot(e.x - p.x, e.y - p.y);
+      if (d < bdAny) { bdAny = d; bestAny = e; }
+      const da = Math.atan2(e.y - p.y, e.x - p.x) - p.facing;
+      if (d <= range && Math.abs(Math.atan2(Math.sin(da), Math.cos(da))) <= arc / 2 && d < bd) { bd = d; best = e; }
+    }
+    return best ?? (bdAny <= range * 1.3 ? bestAny : null);
+  }
+  /** Adds FOCUS and announces once when a Focus Strike becomes affordable (game2's "RAGE READY" cue). */
+  addFocus(n: number) {
+    const p = this.player;
+    if (!(n > 0)) return;
+    const before = p.focusMeter;
+    p.focusMeter = Math.min(FOCUS_MAX, p.focusMeter + n * this.mods.focusGain);
+    if (before < FOCUS_COST && p.focusMeter >= FOCUS_COST && !this.focusReadySaid) {
+      this.focusReadySaid = true;
+      this.feedText('FOCUS READY - PRESS C', this.lvl.biome.accent);
+      SFX.select();
+    }
+  }
+  /** Shared setup for both blur-dashes. Returns false when there is nobody to dash at. */
+  startBlurDash(kind: 'focus' | 'rage', range: number, arc: number, dur: number, color: string, atk: Attack): boolean {
+    const p = this.player;
+    const e = this.nearestStrikeTarget(range, arc);
+    if (!e) return false;
+    const a = Math.atan2(e.y - p.y, e.x - p.x);
+    const gap = e.r + p.r + 4;
+    const dash: BlurDash = {
+      sx: p.x, sy: p.y, tx: e.x - Math.cos(a) * gap, ty: e.y - Math.sin(a) * gap,
+      t: 0, dur, tgt: e, id: e.id, atk, kind, color,
+    };
+    if (kind === 'focus') p.focusDash = dash; else p.rageDash = dash;
+    p.state = 'idle'; p.stateT = 0; p.chargeT = 0; p.didHit = false; p.buffered = false;
+    p.vx = 0; p.vy = 0; p.z = 0; p.vz = 0; p.facing = a;
+    p.iframes = Math.max(p.iframes, kind === 'rage' ? 0.35 : 0.3);
+    p.sqx = 1.35; p.sqy = 0.7;
+    if (e.state !== 'dead' && e.state !== 'broken' && e.state !== 'victim') { e.state = 'stun'; e.stateT = -0.6; e.burst = 0; }
+    this.ring(p.x, p.y, kind === 'rage' ? 34 : 30, color, 0.3);
+    return true;
+  }
+  /** Advances the active blur-dash in REAL time. True while the dash owns the player. */
+  updateBlurDash(raw: number): boolean {
+    const p = this.player;
+    const d = p.focusDash ?? p.rageDash;
+    if (!d) return false;
+    d.t += raw / d.dur;
+    const k = Math.min(1, d.t), ek = 1 - Math.pow(1 - k, 3);   // game2's ease-out cube
+    const nx = lerp(d.sx, d.tx, ek), ny = lerp(d.sy, d.ty, ek);
+    if (!this.boxSolid(nx, ny, p.r)) { p.x = nx; p.y = ny; }
+    // afterimages: game1's ghost particle redraws the whole stick figure in the strike pose
+    this.particle({ x: p.x, y: p.y, life: 0.2, kind: 'ghost', color: d.color, data: { facing: p.facing, pose: 'attack', atk: d.atk.name, t: 0.42 + k * 0.16 } });
+    if (Math.random() < 0.7) this.particle({ x: p.x + (Math.random() - 0.5) * 9, y: p.y - 3, vx: (Math.random() - 0.5) * 40, vy: -30 - Math.random() * 50, life: 0.24, size: 1.4, color: d.color, kind: 'spark', fric: 0.9 });
+    if (k >= 1) {
+      const tgt = d.tgt && d.tgt.state !== 'dead' && d.tgt.state !== 'victim' ? d.tgt : null;
+      const a = tgt ? Math.atan2(tgt.y - p.y, tgt.x - p.x) : p.facing;
+      if (d.kind === 'focus') p.focusDash = null; else p.rageDash = null;
+      p.iframes = Math.max(p.iframes, d.kind === 'rage' ? 0.35 : 0.25);
+      this.startAttack(d.atk, a);
+      this.hitStop(d.kind === 'rage' ? 0.07 : 0.05);
+      this.addShake(d.kind === 'rage' ? 5 : 3);
+      this.ring(p.x, p.y, d.kind === 'rage' ? 26 : 20, d.color, 0.3);
+      if (tgt && tgt.state !== 'broken') { tgt.state = 'stun'; tgt.stateT = -0.35; }
+      if (d.kind === 'rage') this.slowMo(0.22, 0.35);
+    }
+    return true;
+  }
+  /** FOCUS STRIKE (C) — game2's FOCUS: spend 100, blur-dash in, stun, land the heavy in slow motion. */
+  tryFocusStrike() {
+    const p = this.player;
+    if (p.focusDash || p.rageDash || p.ofaActive || p.stunT > 0) return;
+    if (p.state === 'takedown' || p.state === 'ragecharge' || p.state === 'ofapose') return;
+    if (p.focusMeter < FOCUS_COST) { this.text(p.x, p.y - 14, 'NO FOCUS', '#5a7a80', 0.8); SFX.warn(); return; }
+    if (!this.startBlurDash('focus', 130, 1.2, 0.14, this.lvl.biome.accent, this.heavyOfHand())) {
+      this.text(p.x, p.y - 14, 'NO TARGET', '#5a7a80', 0.8); SFX.warn(); return;
+    }
+    p.focusMeter -= FOCUS_COST;
+    this.focusReadySaid = p.focusMeter >= FOCUS_COST;
+    this.slowMo(0.6, 0.3);                                   // game2: slow(0.6, 0.3)
+    SFX.focus(); SFX.slowmo(); SFX.dash();
+    this.flash = 0.25; this.flashColor = this.lvl.biome.accent;
+    this.zoomT = 1.12; this.addShake(2);
+    this.feedText('FOCUS STRIKE', this.lvl.biome.accent);
+  }
+  /** RAGE + LMB — game2's rageStrike: blur-dash to the nearest enemy and execute them. */
+  startRageStrike() {
+    const p = this.player;
+    if (p.focusDash || p.rageDash || p.ofaActive) return;
+    const h = this.heavyOfHand();
+    const exec: Attack = { ...h, dmg: Math.round(h.dmg * 1.7), kb: Math.round(h.kb * 1.35), posture: h.posture + 25 };
+    if (!this.startBlurDash('rage', 170, 1.3, 0.1, '#ff2a2a', exec)) { this.startAttack(); return; } // nobody near: a swing for show
+    p.rage = Math.max(0, p.rage - 5);
+    SFX.dash(); SFX.whoosh();
+    this.slowMo(0.25, 0.3);
+    this.feedText('RAGE STRIKE', '#ff2a2a');
+  }
+  startAttack(force?: Attack, face?: number) {
     const p = this.player;
     p.chargeT = 0;
     // OFA LOCK-ON: blink to the locked enemy if it's out of strike range
@@ -2022,16 +2184,26 @@ export class Game {
     let a = table[p.attackIdx % table.length];
     if (p.weapon === 0 && p.chainFinal) {
       p.chainFinal = false;
-      a = { name: 'FINAL HIT', dmg: 26, range: 31, arc: 2.3, dur: 0.24, lunge: 150, kb: 640, posture: 70, heavy: true };
+      a = { name: 'FINAL HIT', dmg: 26, range: 31, arc: 2.3, dur: 0.24, lunge: 150, kb: 240, posture: 40, heavy: true };
     } else if (p.weapon === 0 && p.chainMode) {
       // auto-FINISHER when the current target is nearly dead
       let tgt: Enemy | null = null, bd = 42;
       for (const e of this.enemies) { if (e.state === 'dead' || e.state === 'victim' || e.state === 'teleport') continue; const d = Math.hypot(e.x - p.x, e.y - p.y); if (d < bd) { bd = d; tgt = e; } }
-      if (tgt && tgt.hp <= Math.max(30, tgt.maxHp * 0.2)) a = { name: 'FINAL HIT', dmg: 34 + p.chainHits * 1.2, range: 31, arc: 2.3, dur: 0.24, lunge: 150, kb: 640, posture: 70, heavy: true };
-      else { a = CHAIN_ATK; p.chainTimer = 0.55; }
+      if (tgt && tgt.hp <= tgt.maxHp * 0.2) a = { name: 'FINAL HIT', dmg: 34 + p.chainHits * 1.2, range: 31, arc: 2.3, dur: 0.24, lunge: 150, kb: 240, posture: 40, heavy: true };
+      else { a = CHAIN_ATK; p.chainTimer = 0.65; }
     }
+    // KATANA CHAIN VARIATIF ala Takamura/Hyun's Dojo: tiap chain di-roll — kadang 1 tebas +
+    // SHEATHE FLASH, kadang 2 tebas + IAI DASH menerobos, kadang 3 tebas + THRUST penutup
+    if (p.weapon === 4 && !force) {
+      if (p.katPlan === 0 || p.comboTimer <= 0) { const r = Math.random(); p.katPlan = r < 0.35 ? 1 : r < 0.65 ? 2 : 3; p.katStep = 0; }
+      if (p.katStep >= p.katPlan) {
+        if (p.katPlan === 2) { p.katPlan = 0; p.katStep = 0; p.attackIdx = 0; this.startIaiDash(); return; }
+        a = p.katPlan === 1 ? { name: 'SHEATHE FLASH', dmg: 14, range: 26, arc: 2.4, dur: 0.2, lunge: 40, kb: 120, posture: 16 } : table[4];
+      } else a = table[p.katStep % 3];
+    }
+    if (force) a = force;
     p.state = 'attack'; p.stateT = 0; p.curAttack = { ...a, dur: a.dur / this.mods.atkSpeed }; p.didHit = false; p.buffered = false;
-    p.facing = Math.atan2(this.mouseWorld.y - p.y, this.mouseWorld.x - p.x);
+    p.facing = face !== undefined ? face : Math.atan2(this.mouseWorld.y - p.y, this.mouseWorld.x - p.x);
     p.sqx = 0.8; p.sqy = 1.2;
     SFX.whoosh();
   }
@@ -2064,6 +2236,16 @@ export class Game {
   }
   doMeleeHit(a: Attack) {
     const p = this.player;
+    if (a.name === 'SHEATHE FLASH') {
+      // Takamura style: bilah melesat masuk sarung — ring putih, slow-mo sekejap, korban terhempas
+      this.ring(p.x, p.y - 4, 16, '#ffffff', 0.25);
+      this.slowMo(0.12, 0.25); this.hitStop(0.05); this.addShake(4);
+      SFX.shing(); SFX.crack();
+      const ft = this.bestMeleeTarget(a.range, a.arc);
+      if (ft) { this.hitEnemy(ft, a.dmg, p.facing, a.kb, a.posture, 'melee', false); this.sparks(ft.x, ft.y - 5, p.facing, 3, '#fff', 190); }
+      for (const b of this.bullets) if (b.owner === 'e' && this.inArc(p.x, p.y, p.facing, a.range + 4, a.arc, b.x, b.y, b.r)) this.deflectBullet(b);
+      return;
+    }
     // ===== MACHETE SPLIT CLEAVE: vertical chop that SPLITS the target =====
     if (a.name === 'SPLIT CLEAVE' && p.weapon === 9) {
       this.addShake(6); this.zoomT = 1.12; this.hitStop(0.1);
@@ -2367,6 +2549,7 @@ export class Game {
     this.particle({ x: sx, y: sy, kind: 'shock', size: 24, life: 0.25, color: '#fff' });
     this.feedText('PERFECT PARRY', '#fff');
     p.focus = Math.min(3, p.focus + 0.5 * this.mods.focusGain); p.riposteT = 0.7; p.riposteTarget = e;
+    this.addFocus(60);
     if (!p.raging) { p.rage = Math.min(100, p.rage + 12); p.ofa = Math.min(100, p.ofa + 5); }
     this.score += 25;
     this.hitEnemy(e, 4, ang, 140, e.maxPosture * (e.kind === 'boss' ? 0.3 : 0.45), 'parry');
@@ -2376,6 +2559,7 @@ export class Game {
     const p = this.player;
     this.slowMo(0.28); SFX.slowmo(); this.feedText('PERFECT DODGE', '#fff'); this.zoomT = 1.08;
     p.focus = Math.min(3, p.focus + 0.35 * this.mods.focusGain); this.score += 15;
+    this.addFocus(30);
     this.ring(p.x, p.y, 16, '#fff', 0.3);
   }
 
@@ -2455,6 +2639,7 @@ export class Game {
     // damage numbers above enemies are hidden; hits read through sparks, blood and knockback instead
     if (source === 'melee' || source === 'kick' || source === 'sweep' || source === 'parry') {
       this.player.focus = Math.min(3, this.player.focus + (source === 'melee' ? 0.1 : 0.05) * m.focusGain);
+      this.addFocus(source === 'melee' ? 7 : 4);
       if (m.lifesteal > 0 && source === 'melee') { this.player.hp = Math.min(m.maxHp, this.player.hp + m.lifesteal); }
     }
     if (source !== 'thorns' && source !== 'parry') { this.combo++; this.comboT = 3.0; this.comboPop = 1; this.maxCombo = Math.max(this.maxCombo, this.combo); if (this.combo >= 10 && this.combo % 10 === 0) this.feedText(`${this.combo} HIT COMBO!`, '#ffd166'); if (this.combo > 0 && this.combo % 25 === 0 && !this.player.raging) this.player.rage = Math.min(100, this.player.rage + 8); }
@@ -2467,7 +2652,7 @@ export class Game {
     }
     if (e.posture >= e.maxPosture && e.state !== 'broken') {
       e.state = 'broken'; e.stateT = 0; e.burst = 0; e.vx *= 0.3; e.vy *= 0.3;
-      SFX.focus(); this.ring(e.x, e.y, 14, '#ffd166', 0.4); this.hitStop(0.05);
+      SFX.focus(); this.ring(e.x, e.y, 14, '#ffd166', 0.4); this.hitStop(0.05); this.addFocus(15);
       return;
     }
     if (e.state === 'broken' || e.state === 'knock') return;
@@ -2488,6 +2673,8 @@ export class Game {
     if (this.streakText) this.feedText(this.streakText, '#ffd166');
     if (this.streakT <= 0) this.streak = 0;
     SFX.kill(); this.addShake(e.kind === 'boss' ? 14 : 4); this.hitStop(e.kind === 'boss' ? 0.25 : 0.06);
+    this.addFocus(e.kind === 'boss' ? 60 : 20);
+    this.slowMo(e.kind === 'boss' ? 0.35 : 0.12, e.kind === 'boss' ? 0.25 : 0.45);   // game2's kill-confirm dip
     // RAGDOLL: the body flies, spins, bounces off walls and slides — no bursting apart
     {
       const cur = Math.hypot(e.vx, e.vy);
@@ -2600,6 +2787,7 @@ export class Game {
           if (dot > 0.93) { const side = (b.vx * by - b.vy * bx) > 0 ? 1 : -1; const pa = Math.atan2(b.vy, b.vx) + side * Math.PI / 2; e.vx += Math.cos(pa) * 170; e.vy += Math.sin(pa) * 170; e.dodgeCd = 0.7; this.smoke(e.x, e.y + 2, 2, '#555'); break; }
         }
       }
+      e.walking = false; // set again by walkTo() when the enemy really travels this frame
       const walkTo = (ang: number, mult = 1) => {
         // smooth turning: the body curves toward the goal instead of snapping
         const td = angDiff(ang, e.moveAng), tmax = 11 * dt;
@@ -2608,10 +2796,17 @@ export class Game {
         const ox = e.x, oy = e.y;
         const blocked = this.move(e, Math.cos(e.moveAng) * s * dt, 0) || this.move(e, 0, Math.sin(e.moveAng) * s * dt);
         if (blocked) { e.stuckT += dt; const side = e.moveAng + e.strafe * Math.PI / 2; this.move(e, Math.cos(side) * s * dt, 0); this.move(e, 0, Math.sin(side) * s * dt); if (e.stuckT > 0.8) { e.strafe *= -1; e.stuckT = 0; } }
-        if (Math.hypot(e.x - ox, e.y - oy) > 0.1) {
-          e.walk += dt * 12;
+        const movedD = Math.hypot(e.x - ox, e.y - oy);
+        if (movedD > 0.1) {
+          // GAME2 GAIT CADENCE (same model as the player): phase + half step length both follow the
+          // real ground speed, so the planted foot never slides.
+          const gs = movedD / Math.max(dt, 1e-4);
+          const stepsPerSec = 3 + 2.5 * clamp(gs / 160, 0, 1);
+          e.strideHalf = clamp(gs / (4 * stepsPerSec), 2.4, 5.6);
+          e.walk += dt * stepsPerSec * Math.PI;
+          e.walking = true;
           if (s * dt > 1.1 && Math.random() < 0.35) this.particle({ x: e.x, y: e.y + 2.5, vx: -Math.cos(e.moveAng) * 12, vy: -4, life: 0.3, size: 1.4, color: 'rgba(140,140,150,0.4)', kind: 'smoke', fric: 0.9 });
-        }
+        } else e.strideHalf = 0;
       };
 
       switch (e.state) {
@@ -3002,6 +3197,7 @@ export class Game {
     b.vx = Math.cos(ang) * sp; b.vy = Math.sin(ang) * sp;
     SFX.parry(); this.sparks(b.x, b.y, ang, 8, '#fff', 200); this.ring(b.x, b.y, 8, '#fff', 0.2); this.hitStop(0.04);
     this.player.focus = Math.min(3, this.player.focus + 0.2 * this.mods.focusGain);
+    this.addFocus(25);
     this.score += 10;
   }
   updateBullets(dt: number) {

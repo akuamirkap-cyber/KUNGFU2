@@ -117,6 +117,8 @@ export const MOVES: Record<string, Move> = {
   // RUN + LMB with the katana: the dash-through "one cut" (Iaijutsu)
   KRUN: { id: 'k_iaijutsu', name: 'IAIJUTSU', pose: 'k_iaijutsu', dmg: 18, structure: 120, range: 36, arc: 1.0, windup: 0.1, active: 0.26, recover: 0.5, kb: 120, knockdown: true, lunge: 0, hitstop: 0.0, shake: 0.3, sfx: 'slash', limb: 'blade', hitR: 6, katana: true, bleed: true, travel: 520, rehit: 0.3, slash: { from: 0, to: 0, r: 21 }, finisher: true, showName: true },
   KDASH: { id: 'k_dashcut', name: 'DASH CUT', pose: 'k_crescent', dmg: 9, structure: 36, range: 32, arc: 1.6, windup: 0.04, active: 0.24, recover: 0.24, kb: 280, knockdown: true, lunge: 0, hitstop: 0.09, shake: 0.5, sfx: 'slash', limb: 'blade', hitR: 4.5, katana: true, bleed: true, travel: 300, slash: { from: -2.0, to: 1.4, r: 20 }, finisher: true, showName: true },
+  // V2 finisher: bilah melesat masuk sarung — ring putih + slow-mo sekejap ala panel manga Takamura
+  KSHEATH: { id: 'k_sheatheflash', name: 'SHEATHE FLASH', pose: 'k_sheathe', dmg: 6, structure: 40, range: 26, arc: 2.6, windup: 0.05, active: 0.05, recover: 0.34, kb: 240, knockdown: true, lunge: 0, hitstop: 0.16, shake: 0.9, sfx: 'slash', limb: 'blade', hitR: 4, katana: true, bleed: true, slash: { from: -0.5, to: 0.5, r: 15 }, finisher: true, showName: true },
 };
 
 // ============================== AXE: baseball-bat swings (flat, hip-driven, follow-through) ==============================
@@ -149,6 +151,7 @@ Object.assign(MOVES, {
 
 export const MOVE_LIST: { keys: string; name: string; desc: string }[] = [
   { keys: 'LMB x5', name: 'JAB > CROSS > HOOK > ROUNDHOUSE > DRAGON TAIL', desc: 'Light chain ending in a 360 launcher. Every hit lands where the fist/foot is.' },
+  { keys: 'X', name: 'ONE FOR ALL (SLOW-MO SUPER)', desc: 'At 25+ charge, press X: the WORLD drops to 30% speed while you keep running at full real-time speed (about 4.4x faster than everything around you), the camera pulls back, lightning crackles off your body, and every strike AUTO-LOCKS and blinks to the nearest enemy. The meter burns for roughly 12.5 seconds on a full charge. Charge it by landing hits (damage x0.1), kills (+7, boss +15), parries (+5) and fatalities (+6/+10). Ported from STICK FIST.' },
   { keys: 'RHYTHM = STYLE', name: 'FREESTYLE FLOW (FISTS)', desc: 'Your click TEMPO picks the style and the game chains the moves. FAST taps (0.1-0.3s) = WING CHUN chain punch. MEDIUM groove (0.3-0.6s) = BLACK LEG kick flow (Collier > Epaule > Cotelette > Anti-Manner > Mouton Shot > Concasse > Party Table > DIABLE JAMBE). SLOW heavy beats (0.6-1.0s) = KUNG FU heavies (Palm > Iron Palm > Hammer Fist > Dragon Uppercut). Switch tempo mid-fight to transition styles; nearly-dead targets get an automatic finisher.' },
   { keys: 'HEAT', name: 'IN THE ZONE', desc: 'Stay in one rhythm to build HEAT: damage and move speed rise, the screen pulses with the beat. Getting hit cools you down.' },
   { keys: 'R (RAGE FULL)', name: 'RAGE MODE', desc: '8 seconds: every LMB dashes to the nearest enemy and executes it (bosses take heavy damage). Fair: rage only fills by landing chain punches.' },
@@ -165,6 +168,7 @@ export const MOVE_LIST: { keys: string; name: string; desc: string }[] = [
   { keys: 'NUNCHAKU: F', name: 'CHAIN FATALITIES', desc: 'Garrote snap, skull drum, helicopter decapitation.' },
   { keys: '5: KATANA', name: 'IAI DRAW > RETURN CUT > CRESCENT MOON > HEAVEN SPLITTER', desc: 'RMB: LUNGING THRUST. LMB,RMB: RISING MOON (launch). LMB,LMB,RMB: WHIRLWIND. RMB,LMB: THOUSAND CUTS. RMB,RMB: DRAGON FANG. Cuts bleed.' },
   { keys: 'KATANA: RUN + LMB', name: 'IAIJUTSU', desc: 'Dash through them. One cut. They fall after you sheathe.' },
+  { keys: '5: KATANA V2', name: 'VARIABLE CHAINS + DASH SLASH', desc: 'Every chain is rolled: 1 cut then SHEATHE FLASH (snap into the sheath), 2 cuts then DASH CUT through them, or the classic 4-hit HEAVEN SPLITTER. Dash-slashes trail afterimages.' },
   { keys: 'KATANA: F', name: 'BLADE FATALITIES', desc: 'Bisection, beheading, impale & flick.' },
   { keys: '6: AXE', name: 'SWING > BACKHAND > HOME RUN', desc: 'Baseball-bat swings: load, hips, contact, follow-through. 3rd swing is a HOME RUN launcher. RMB: TORNADO SWING (720). LMB,RMB: GOLF SWING (scoop launch). LMB,LMB,RMB: SKULL SPLITTER. RMB,LMB: BUNT. RUN+LMB: GRAND SLAM.' },
   { keys: '7: DUAL BLADES', name: 'CROSS > SCISSOR > FLURRY > X-SLASH', desc: 'Two hitboxes, very fast. RMB: BLADE DANCE. LMB,RMB: TWIN RISING (launch). RUN+LMB: PHANTOM CROSS (dash through).' },

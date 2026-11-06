@@ -109,7 +109,7 @@ export interface Mods {
 
 export const DEFAULT_MODS: Mods = {
   maxHp: 100, atkSpeed: 1, dmg: 1, parryWindow: 1, focusGain: 1, dashCd: 1, ammoMult: 1,
-  lifesteal: 0, gunDmg: 1, moveSpeed: 1, deflectDmg: 1, takedownHeal: 8, comboLen: 4, critChance: 0.05, thorns: 0, pickupRange: 1, regen: 0,
+  lifesteal: 0, gunDmg: 1, moveSpeed: 1, deflectDmg: 1, takedownHeal: 8, comboLen: 5, critChance: 0.05, thorns: 0, pickupRange: 1, regen: 0,
 };
 
 export interface Upgrade {
@@ -154,19 +154,20 @@ export const AI_TIERS = [
 
 export const TECHNIQUES = [
   { key: 'HOLD WASD', name: 'Sprint', desc: 'Keep moving to build up to 3x speed until you release the keys.' },
-  { key: 'LMB', name: 'Combo Strike', desc: 'Jab → Cross → Hook → Roundhouse. Heavy hits launch enemies. Press during a dash for a DASH STRIKE.' },
+  { key: 'LMB / J', name: 'Combo Strike', desc: 'Jab → Cross → Hook → Elbow → Roundhouse. 5-hit combo; light hits keep enemies close instead of launching them. Press during a dash for a DASH STRIKE.' },
+  { key: 'LMB SPAM', name: 'Wing Chun Chain', desc: 'Fists only: spam LMB fast and you enter a Wing Chun chain — blinding alternating centreline punches that glue the enemy in place. Land 6+ chain hits, keep spamming, then pause to unleash the FINAL HIT finisher.' },
   { key: 'SPRINT+LMB', name: 'Weapon Rush', desc: 'While sprinting, click LMB: FISTS fly kick · NUNCHAKU cyclone · KATANA iai dash · AXE rush · DUAL blade rush.' },
   { key: 'SPRINT+LMB', name: 'Nunchaku Cyclone', desc: 'NUNCHAKU ONLY: while sprinting, click LMB (or Q) for a spinning chain cyclone. Fatalities become chain finishers.' },
-  { key: 'HOLD RMB', name: 'Parry / Guard', desc: 'Hold RMB to guard. A strike landing in the first moment = PERFECT PARRY (stuns them + riposte). Held longer = block. Also deflects bullets.' },
+  { key: 'RMB / K', name: 'Parry / Guard', desc: 'Hold RMB to guard. A strike landing in the first moment = PERFECT PARRY (stuns them + riposte). Held longer = block. Also deflects bullets.' },
   { key: 'SPACE', name: 'Jump', desc: 'Leap over bullets and melee swings. Time it well.' },
   { key: 'SHIFT', name: 'Shadow Step', desc: 'Fast dash with i-frames. Perfect dodge = slow-mo.' },
   { key: 'Q', name: 'Flying Kick', desc: 'MK-style airborne kick that pierces through multiple enemies and slams them into walls. (1 focus)' },
   { key: 'E', name: 'Leg Sweep', desc: 'Spin kick breaking posture around you. (1 focus)' },
   { key: 'F', name: 'FATALITY', desc: 'Finish a posture-broken enemy: 8 random finishers (Uppercut, Rush Punch, Axe Kick, Palm Blast...). Heals you.' },
   { key: 'LMB AIR', name: 'Air Kick', desc: 'Jump, then LMB: diving kick. Bounce off enemies and juggle the launched ones.' },
-  { key: 'HOLD LMB', name: 'Charge Palm', desc: 'Keep LMB held, release for a blasting palm.' },
+  { key: 'HOLD J / LMB', name: 'Charge Palm', desc: 'Keep LMB held, release for a blasting palm.' },
   { key: 'PARRY→LMB', name: 'Riposte', desc: 'Strike right after a perfect parry: devastating counter.' },
-  { key: '5', name: 'Katana', desc: 'Iaido slash string. Slashes bleed enemies. Hold LMB then release: IAI DASH through the line. Beware: SAMURAI enemies can parry you!' },
+  { key: '5', name: 'Katana', desc: 'Variable iai chains: sometimes 1 cut + SHEATHE FLASH, sometimes 2 cuts + IAI DASH through them, sometimes 3 cuts + THRUST. Dash, then LMB: dash-slash IAI DASH. Hold LMB then release: IAI DASH. Slashes bleed. Beware: SAMURAI enemies can parry you!' },
   { key: '6', name: 'Axe', desc: 'Baseball-bat swings: slow, huge arcs, monstrous knockback. HOME RUN launches victims.' },
   { key: '7', name: 'Dual Blades', desc: 'Twin daggers: fastest string in the game, every cut bleeds.' },
   { key: '8', name: 'Bo Staff', desc: 'Spinning staff: huge arcs, big posture. Sprint/Q: POLE VAULT slam.' },
@@ -175,7 +176,8 @@ export const TECHNIQUES = [
   { key: 'HOLD L', name: 'Fast Level', desc: 'Hold L to grind levels fast — campaign floors skip quickly, endless showers XP.' },
   { key: 'B', name: 'Blood FX', desc: 'Cycle blood: NORMAL / PARTICLE / COMBINED (particles + permanent floor stains).' },
   { key: 'SPAM LMB', name: 'Wing Chun Chain', desc: 'FISTS only: click LMB every 0.1-0.4s to chain-punch at blinding speed. Nearly-dead targets eat a CHAIN FINISHER.' },
-  { key: 'R + LMB', name: 'RAGE', desc: 'Earn rage by taking hits & perfect parries. At 60+, press R: every LMB teleports you to the nearest enemy for a flurry.' },
+  { key: 'R + LMB', name: 'RAGE', desc: 'Earn rage by taking hits & perfect parries. At 60+, press R: every LMB blur-dashes you to the nearest enemy for a slow-mo EXECUTION (1.7x damage, heavy knockback).' },
+  { key: 'C', name: 'Focus Strike', desc: 'Spend 100 FOCUS: time slows, you blur-dash to the nearest enemy, they stagger, and you land the heavy finisher of whatever is in your hands (FISTS = DRAGON PALM). Focus builds from landed hits (+7), kills (+20, boss +60), perfect parries (+60), perfect dodges (+30), deflects (+25) and posture breaks (+15). Max 300.' },
   { key: 'X', name: 'ONE FOR ALL', desc: 'At 25+ charge: ~12s of slow-mo where YOU move at 4x speed and AUTO-LOCK the nearest enemy — kill it and the lock jumps to the next. Spam everything.' },
   { key: '1-9', name: 'Weapons', desc: 'Fists / Pistol / Rifle / Nunchaku / Katana / Axe / Dual / Staff / Sanada Spear. Scroll swaps.' },
 ];
