@@ -43,6 +43,8 @@ export class Input {
   mouse = { x: VIEW_W / 2, y: VIEW_H / 2, down: false, rdown: false, mdown: false, pressed: false, rpressed: false, wheel: 0 };
   /** true once any real keyboard event reached us */
   keyboardSeen = false;
+  /** performance.now() of the last REAL cursor move/click; virtual strikes use it for aim assist */
+  mouseMovedAt = 0;
   /** number of same-origin ancestor documents we also listen on (iframe previews) */
   parentAttached = 0;
   autoFocusOnHover = false;
@@ -64,10 +66,17 @@ export class Input {
         if (GAME_KEYS.has(n)) prevent = true;
       }
       if (names.length) this.keyboardSeen = true;
+      // J / K = keyboard aliases for LMB / RMB (attack / secondary), so the game is playable and
+      // drivable from the showcase's virtual buttons without a mouse.
+      if (names.includes('j')) this.synthMouseDown(0);
+      if (names.includes('k')) this.synthMouseDown(2);
       if (prevent && own) e.preventDefault();
     };
     const ku = (e: KeyboardEvent) => {
-      for (const n of namesOf(e)) this.keys.delete(n);
+      const names = namesOf(e);
+      for (const n of names) this.keys.delete(n);
+      if (names.includes('j')) this.synthMouseUp(0);
+      if (names.includes('k')) this.synthMouseUp(2);
       if (e.key === 'Shift') this.keys.delete('shift');
     };
     const mm = (e: MouseEvent) => this.updateMouse(e);
@@ -146,6 +155,7 @@ export class Input {
   }
 
   private updateMouse(e: MouseEvent) {
+    this.mouseMovedAt = performance.now();
     const r = this.canvas.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return;
     this.mouse.x = ((e.clientX - r.left) / r.width) * VIEW_W;
@@ -157,6 +167,16 @@ export class Input {
   }
   hit(k: string) {
     return this.pressed.has(k);
+  }
+  /** Synthesize a mouse button press / release. The sim reads every strike from the mouse, so this
+   *  is what lets the J / K keyboard aliases (below) and the showcase's virtual buttons attack. */
+  synthMouseDown(button: number) {
+    if (button === 0) { this.mouse.down = true; this.mouse.pressed = true; }
+    else if (button === 2) { this.mouse.rdown = true; this.mouse.rpressed = true; }
+  }
+  synthMouseUp(button: number) {
+    if (button === 0) this.mouse.down = false;
+    else if (button === 2) this.mouse.rdown = false;
   }
   endFrame() {
     this.pressed.clear();

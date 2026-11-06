@@ -7,7 +7,7 @@ import { MUTATIONS } from './game/mutations';
 const initialUI: UIState = {
   state: 'menu', level: 1, zoneName: ZONES[0].name, zoneSub: ZONES[0].sub, score: 0, age: 20, deathCounter: 1, deaths: 0, kills: 0,
   bestCombo: 0, choices: [], save: null, best: { level: 0, score: 0 }, muted: false, mutations: [], ageGain: 0, hp: 5, maxHp: 5, accent: '#ff5a36',
-  mode: 'story', wave: 0, survivalTime: 0, bestWave: 0, bestSurvivalScore: 0, blood: 'combined',
+  mode: 'story', wave: 0, survivalTime: 0, bestWave: 0, bestSurvivalScore: 0, blood: 'combined', v2: true, long: false,
 };
 
 function useScale() {
@@ -51,12 +51,38 @@ export default function App() {
     }
     g.input.focus();
 
+    // Virtual / keyboard strike support: when no real cursor is over the game, aim the strike at the
+    // nearest living enemy. Otherwise a punch sent from the showcase's on-screen button would fly
+    // toward whatever stale spot the aim was last left at (the sim aims purely from the cursor).
+    const aimAssist = (game: Game) => {
+      if (performance.now() - game.input.mouseMovedAt < 1500) return;
+      const p = game.player;
+      let bi = -1; let bd = Infinity;
+      for (let i = 0; i < game.enemies.length; i++) {
+        const e = game.enemies[i];
+        if (e.dead || e.spawnT > 0) continue;
+        const d = (e.x - p.x) * (e.x - p.x) + (e.y - p.y) * (e.y - p.y);
+        if (d < bd) { bd = d; bi = i; }
+      }
+      if (bi < 0) return;
+      const t = game.enemies[bi];
+      game.input.mouse.x = (t.x - game.cam.x - VIEW_W / 2) * game.zoom + VIEW_W / 2;
+      game.input.mouse.y = (t.y - game.cam.y - VIEW_H / 2) * game.zoom + VIEW_H / 2;
+    };
+
     const onMsg = (ev: MessageEvent) => {
       if (!ev.data || typeof ev.data !== 'object') return;
       if (ev.data.type === 'KF_KEYDOWN') {
         window.dispatchEvent(new KeyboardEvent('keydown', { code: ev.data.code, key: ev.data.key || '', bubbles: true }));
       } else if (ev.data.type === 'KF_KEYUP') {
         window.dispatchEvent(new KeyboardEvent('keyup', { code: ev.data.code, key: ev.data.key || '', bubbles: true }));
+      } else if (ev.data.type === 'KF_MOUSEDOWN') {
+        const game = gameRef.current;
+        if (!game) return;
+        aimAssist(game);
+        game.input.synthMouseDown(typeof ev.data.button === 'number' ? ev.data.button : 0);
+      } else if (ev.data.type === 'KF_MOUSEUP') {
+        gameRef.current?.input.synthMouseUp(typeof ev.data.button === 'number' ? ev.data.button : 0);
       } else if (ev.data.type === 'KF_ACTION') {
         if (ev.data.action === 'start') {
           if (gameRef.current?.state === 'menu') gameRef.current.newGame(null);
@@ -83,20 +109,55 @@ export default function App() {
   const act = (fn: () => void) => () => { focusGame(); fn(); focusGame(); };
   const w = VIEW_W * scale, h = VIEW_H * scale;
   const fontPx = Math.min(22, Math.max(12, Math.round(4.5 * scale)));
+  // V2 renders into a display-sized backing store so the picture is resampled exactly ONCE (hard pixel edges).
+  // V1 keeps the classic fixed 480x270 buffer that CSS stretches — that is the old, softer look.
+  const dpr = typeof window === 'undefined' ? 1 : Math.min(2, window.devicePixelRatio || 1);
+  const bw = ui.v2 ? Math.max(VIEW_W, Math.min(1920, Math.round(w * dpr))) : VIEW_W;
+  const bh = ui.v2 ? Math.max(VIEW_H, Math.round((bw * VIEW_H) / VIEW_W)) : VIEW_H;
 
   return (
     <div
-      className="w-screen h-screen bg-black flex items-center justify-center overflow-hidden select-none"
+      className="relative w-screen h-screen bg-black flex items-center justify-center overflow-hidden select-none"
       onContextMenu={(e) => e.preventDefault()}
       onMouseDown={focusGame}
       onPointerDown={focusGame}
       onClick={focusGame}
     >
+      {/* V1 / V2 switch: V2 = pixel tajam (satu tahap resample) + ragdoll gabungan game1. V1 = build lama. */}
+      <button
+        onClick={act(() => g().toggleV2())}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="pixel absolute top-2 right-2 z-30 cursor-pointer border-2 px-2 py-1 leading-none transition-colors hover:brightness-150"
+        style={{
+          borderColor: ui.v2 ? '#7df9ff' : '#6a6a6a',
+          color: ui.v2 ? '#7df9ff' : '#9a9a9a',
+          background: 'rgba(0,0,0,0.78)',
+          fontSize: Math.max(9, Math.round(fontPx * 0.62)),
+        }}
+        title={ui.v2 ? 'V2 aktif: pixel tajam + ragdoll/pusing ala STICK FIST. Klik untuk kembali ke V1 (tampilan lama).' : 'V1 aktif: build lama. Klik untuk menyalakan V2 (pixel tajam + ragdoll baru).'}
+      >
+        {ui.v2 ? '* V2 NEW' : 'V1 OLD'}
+      </button>
+      {/* LONG-LIMB switch (L): badan/tangan/kaki 2.5x panjang normal — reach serangan ikut panjang. */}
+      <button
+        onClick={act(() => g().toggleLong())}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="pixel absolute top-2 right-24 z-30 cursor-pointer border-2 px-2 py-1 leading-none transition-colors hover:brightness-150"
+        style={{
+          borderColor: ui.long ? '#ffd27f' : '#6a6a6a',
+          color: ui.long ? '#ffd27f' : '#9a9a9a',
+          background: 'rgba(0,0,0,0.78)',
+          fontSize: Math.max(9, Math.round(fontPx * 0.62)),
+        }}
+        title={ui.long ? 'LONG LIMBS aktif: badan/tangan/kaki 2.5x panjang normal. Klik untuk kembali normal.' : 'Klik untuk mode LONG LIMBS: badan/tangan/kaki 2.5x panjang normal (atau tekan L).'}
+      >
+        {ui.long ? '* LONG x2.5' : 'LONG x2.5'}
+      </button>
       <div className="relative" style={{ width: w, height: h, fontSize: fontPx }}>
         <canvas
           ref={canvasRef}
-          width={VIEW_W}
-          height={VIEW_H}
+          width={bw}
+          height={bh}
           tabIndex={0}
           className="block w-full h-full cursor-none outline-none"
           style={{ imageRendering: 'pixelated' }}
@@ -176,7 +237,7 @@ export default function App() {
 
               {/* ---------- FOOTER ---------- */}
               <div className="flex flex-col items-center gap-[0.3em] mt-[1em]">
-                <div className="pixel text-[0.5em] text-white/35">WASD RUN · SPACE JUMP · SHIFT SHADOW STEP · LMB/RMB ATTACK · SPAM LMB CHAIN PUNCH · R RAGE · F FATALITY · E FOCUS · C PARRY · 1-7 WEAPONS</div>
+                <div className="pixel text-[0.5em] text-white/35">WASD RUN · SPACE JUMP · SHIFT SHADOW STEP · LMB/RMB ATTACK · SPAM LMB CHAIN PUNCH · R RAGE · X ONE FOR ALL (SLOW-MO) · F FATALITY · E FOCUS · C PARRY · V V1/V2 LOOK · L LONG LIMBS x2.5 · 1-7 WEAPONS</div>
                 <div className="pixel text-[0.45em] text-yellow-300/60">IF THE KEYBOARD DOES NOTHING, CLICK THE GAME ONCE TO FOCUS IT</div>
               </div>
             </div>
@@ -354,9 +415,11 @@ function Controls({ compact }: { compact?: boolean }) {
       <Row k="SPACE" v="JUMP (HOP OVER BULLETS)" /><Row k="SHIFT" v="SHADOW STEP (DASH, I-FRAMES)" />
       <Row k="C" v="PARRY" />
       <Row k="E" v="FOCUS STRIKE" /><Row k="F" v="FATALITY (ANY ENEMY IN REACH)" />
+      <Row k="X" v="ONE FOR ALL (AT 25+ CHARGE): WORLD SLOWS TO 30%, YOU RUN AT REAL TIME, STRIKES AUTO-LOCK" />
       <Row k="CLICK TEMPO (FISTS)" v="FAST = WING CHUN  /  MEDIUM = BLACK LEG KICKS  /  SLOW = KUNG FU HEAVIES" /><Row k="R" v="RAGE (WHEN METER FULL): LMB = DASH + EXECUTE" />
             <Row k="Q / 1-7 / WHEEL" v="FIST / PISTOL / RIFLE / NUNCHAKU / KATANA / AXE / DUAL" />
       <Row k="B" v="BLOOD: NORMAL / GORE / COMBINED" /><Row k="ESC" v="PAUSE" />
+      <Row k="V" v="SWITCH LOOK: V2 = CRISP PIXELS + GAME1 RAGDOLL (WALL BOUNCE, DIZZY STARS, KICKABLE BODIES) / V1 = CLASSIC BUILD" />
       {!compact && (
         <>
           <div className="text-white/40 col-span-full mt-[0.8em] mb-[0.3em]">KUNG FU TECHNIQUES</div>

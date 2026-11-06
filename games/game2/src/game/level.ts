@@ -135,7 +135,36 @@ export function flowDir(l: Level, flow: Int16Array, x: number, y: number): Vec |
 }
 
 /** Big open survival arena: scattered pillars / low walls, lots of room for crowds, spawn in the centre. */
-export function generateArena(seed: number): Level {
+/** V2 survival arena: STICK FIST's endless-arena blueprint — 64x44, a 2-tile solid border, 10-15 block
+ *  clusters (1-3 x 1-3), a few long wall segments, centre kept open, spawn in the middle. */
+export function generateArenaG1(seed: number): Level {
+  const rng = new Rng(seed * 48271 + 99991);
+  const w = 64, h = 44;
+  const tiles = new Uint8Array(w * h).fill(0);
+  const set = (x: number, y: number, v: number) => { if (x >= 0 && y >= 0 && x < w && y < h) tiles[y * w + x] = v; };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) set(x, y, 1);
+  const cx = w / 2, cy = h / 2;
+  const blocks = 10 + rng.int(0, 5);
+  for (let i = 0; i < blocks; i++) {
+    const bw = 1 + rng.int(0, 2), bh = 1 + rng.int(0, 2);
+    const bx = 4 + rng.int(0, w - 9 - bw), by = 4 + rng.int(0, h - 9 - bh);
+    if (Math.abs(bx - cx) < 6 && Math.abs(by - cy) < 5) continue;   // keep the centre open, like game1
+    for (let yy = by; yy < by + bh; yy++) for (let xx = bx; xx < bx + bw; xx++) set(xx, yy, 1);
+  }
+  const segs = 3 + rng.int(0, 2);
+  for (let i = 0; i < segs; i++) {
+    const horiz = rng.chance(0.5), len = 4 + rng.int(0, 5);
+    const sx = 5 + rng.int(0, w - 11 - len), sy = 5 + rng.int(0, h - 11 - len);
+    if (Math.abs(sx - cx) < 8 && Math.abs(sy - cy) < 6) continue;
+    for (let k = 0; k < len; k++) set(horiz ? sx + k : sx, horiz ? sy : sy + k, 1);
+  }
+  const floorTiles: Vec[] = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (tiles[y * w + x] === 0) floorTiles.push({ x, y });
+  return { n: 0, zone: 0, w, h, tiles, spawn: { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 }, exit: { x: cx * TILE, y: cy * TILE }, floorTiles, isBoss: false, style: 'arena', seed };
+}
+
+export function generateArena(seed: number, classic = false): Level {
+  if (!classic) return generateArenaG1(seed);
   const rng = new Rng(seed * 7919 + 101);
   const w = 60, h = 42;
   const tiles = new Uint8Array(w * h).fill(1);

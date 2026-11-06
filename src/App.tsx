@@ -33,6 +33,8 @@ interface GameInfo {
   borderGlow: string;
   badgeColor: string;
   description: string;
+  /** key that fires this game's FOCUS / super strike (game1 = C, game2 = E) */
+  focusKey: string;
   controls: {
     move: string;
     attack: string;
@@ -49,14 +51,15 @@ const GAMES: GameInfo[] = [
     version: 'v1.0 • 200 Floors',
     htmlPath: '/game1.html',
     themeColor: '#ff3b3b',
+    focusKey: 'KeyC',
     accentBg: 'from-rose-600 to-red-950',
     borderGlow: 'border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.45)] ring-2 ring-red-500/50',
     badgeColor: 'bg-red-500/20 text-red-400 border-red-500/40',
     description: 'Fast-paced martial arts roguelite stick brawl. Combo enemies, deflect blades, and climb 200 floors.',
     controls: {
-      move: 'W A S D / Tombol Panah',
-      attack: 'Klik Kiri / Spasi',
-      special: 'Klik Kanan / Shift',
+      move: 'W A S D / Panah · Spasi = Lompat',
+      attack: 'Klik Kiri / J (tahan = Charge Palm)',
+      special: 'C = Focus Strike · R = Rage · X = OFA · K = Parry',
       pause: 'Esc / P'
     }
   },
@@ -67,14 +70,15 @@ const GAMES: GameInfo[] = [
     version: 'v2.0 • Survival & Story',
     htmlPath: '/game2.html',
     themeColor: '#38bdf8',
+    focusKey: 'KeyE',
     accentBg: 'from-cyan-600 to-sky-950',
     borderGlow: 'border-cyan-400 shadow-[0_0_40px_rgba(56,189,248,0.45)] ring-2 ring-cyan-400/50',
     badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
     description: 'Weapon mastery with katana & nunchaku, mutations, age mechanic, and hardcore martial arts survival.',
     controls: {
       move: 'W A S D / Tombol Panah',
-      attack: 'Klik Kiri / Spasi (J)',
-      special: 'Q / E / Shift (K)',
+      attack: 'Klik Kiri / J',
+      special: 'X = One For All · E = Focus · R = Rage · F = Fatality · V = V1/V2',
       pause: 'Esc / P'
     }
   }
@@ -130,6 +134,19 @@ export default function App() {
       type: isDown ? 'KF_KEYDOWN' : 'KF_KEYUP',
       code,
       key
+    }, '*');
+  };
+
+  // Send a real MOUSE button to the active iframe. Both games bind their strike to the LEFT mouse
+  // button (in game 1 SPACE is JUMP, in game 2 SPACE is not an attack at all), so a key-only bridge
+  // made the on-screen PUKUL button hop instead of punching.
+  const sendMouse = (button: number, isDown: boolean) => {
+    const iframe = getActiveIframe();
+    if (!iframe?.contentWindow) return;
+
+    iframe.contentWindow.postMessage({
+      type: isDown ? 'KF_MOUSEDOWN' : 'KF_MOUSEUP',
+      button
     }, '*');
   };
 
@@ -615,10 +632,10 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <div className="flex flex-col items-center gap-1">
                   <button
-                    onMouseDown={() => { sendKey('Space', true, ' '); setPressedBtn('punch'); }}
-                    onMouseUp={() => { sendKey('Space', false, ' '); setPressedBtn(null); }}
-                    onTouchStart={(e) => { e.preventDefault(); sendKey('Space', true, ' '); setPressedBtn('punch'); }}
-                    onTouchEnd={(e) => { e.preventDefault(); sendKey('Space', false, ' '); setPressedBtn(null); }}
+                    onMouseDown={() => { sendMouse(0, true); setPressedBtn('punch'); }}
+                    onMouseUp={() => { sendMouse(0, false); setPressedBtn(null); }}
+                    onTouchStart={(e) => { e.preventDefault(); sendMouse(0, true); setPressedBtn('punch'); }}
+                    onTouchEnd={(e) => { e.preventDefault(); sendMouse(0, false); setPressedBtn(null); }}
                     className={`w-11 h-11 rounded-full font-bold text-xs flex items-center justify-center shadow-lg transition-transform ${
                       pressedBtn === 'punch'
                         ? 'bg-rose-600 text-white scale-90 ring-2 ring-rose-400'
@@ -645,6 +662,23 @@ export default function App() {
                     B
                   </button>
                   <span className="text-[9px] font-mono text-zinc-400">JURUS</span>
+                </div>
+
+                <div className="flex flex-col items-center gap-1">
+                  <button
+                    onMouseDown={() => { sendKey(GAMES[activeSlide].focusKey, true); setPressedBtn('focus'); }}
+                    onMouseUp={() => { sendKey(GAMES[activeSlide].focusKey, false); setPressedBtn(null); }}
+                    onTouchStart={(e) => { e.preventDefault(); sendKey(GAMES[activeSlide].focusKey, true); setPressedBtn('focus'); }}
+                    onTouchEnd={(e) => { e.preventDefault(); sendKey(GAMES[activeSlide].focusKey, false); setPressedBtn(null); }}
+                    className={`w-11 h-11 rounded-full font-bold text-xs flex items-center justify-center shadow-lg transition-transform ${
+                      pressedBtn === 'focus'
+                        ? 'bg-amber-500 text-black scale-90 ring-2 ring-amber-300'
+                        : 'bg-gradient-to-b from-amber-400 to-orange-600 text-black hover:brightness-110 active:scale-95 shadow-amber-900/50'
+                    }`}
+                  >
+                    C
+                  </button>
+                  <span className="text-[9px] font-mono text-amber-400">FOKUS</span>
                 </div>
               </div>
             </div>

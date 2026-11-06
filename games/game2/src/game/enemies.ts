@@ -300,6 +300,9 @@ export function friendlyInLine(g: Game, e: Enemy, ang: number, maxD: number) {
 export function updateEnemy(g: Game, e: Enemy, dt: number) {
   const p = g.player;
   e.poseT += dt / e.poseDur;
+  // V2 juicy squash relaxes back to neutral (game1 uses the same ~10/s easing)
+  e.sqx = (e.sqx ?? 1) + (1 - (e.sqx ?? 1)) * Math.min(1, dt * 10);
+  e.sqy = (e.sqy ?? 1) + (1 - (e.sqy ?? 1)) * Math.min(1, dt * 10);
   if (e.flash > 0) e.flash -= dt;
   if (e.flinch > 0) e.flinch -= dt;
   if (e.parryCd > 0) e.parryCd -= dt;
@@ -324,7 +327,7 @@ export function updateEnemy(g: Game, e: Enemy, dt: number) {
     e.z += e.vz * dt;
     e.pose = 'launched';
     e.rot = Math.max(-0.9, Math.min(0.9, -e.vz / 350)) * e.facing;
-    if (e.z <= 0) { e.z = 0; e.vz = 0; e.rot = 0; g.enemyLand(e); }
+    if (e.z <= 0) { const impact = -e.vz; e.z = 0; e.vz = 0; e.rot = 0; g.enemyLand(e, impact); }
     return;
   }
   const ddx = p.x - e.x, ddy = p.y - e.y;
@@ -342,11 +345,18 @@ export function updateEnemy(g: Game, e: Enemy, dt: number) {
   }
   if (e.down > 0) {
     e.down -= dt; e.pose = 'down';
-    if (e.down <= 0) { e.state = 'chase'; e.attackCd = 0.5; e.structure *= 0.6; }
+    if (e.down <= 0) {
+      e.structure *= 0.6;
+      // V2 (game1): bangun dari lantai sambil pusing dulu sebentar, bukan langsung mengejar
+      if (g.v2) { e.stun = 0.7; e.state = 'stun'; e.pose = 'hurt'; e.attackCd = 1.0; e.getupT = 0.26; e.fall = undefined; }
+      else { e.state = 'chase'; e.attackCd = 0.5; }
+    }
     return;
   }
   if (e.stun > 0) {
-    e.stun -= dt; e.pose = 'hurt';
+    e.stun -= dt;
+    if ((e.getupT ?? 0) > 0) { e.getupT = (e.getupT ?? 0) - dt; e.pose = 'getup'; }   // V2: bangkit bertumpu dulu, baru pusing
+    else e.pose = 'hurt';
     if (e.stun <= 0) e.state = 'chase';
     return;
   }

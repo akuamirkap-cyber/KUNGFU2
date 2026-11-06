@@ -1,5 +1,5 @@
 import { Sfx } from './audio';
-import { LEVELS_PER_ZONE, PLAYER_BAND, PLAYER_COLOR, TILE, TOTAL_LEVELS, VIEW_H, VIEW_W, ZONES, type Palette } from './constants';
+import { BASE_ZOOM, LEVELS_PER_ZONE, PLAYER_BAND, PLAYER_COLOR, TILE, TOTAL_LEVELS, VIEW_H, VIEW_W, ZONES, type Palette } from './constants';
 import { buildLevelCanvas, drawHUD, drawShadow, drawStick, drawVignette } from './draw';
 import { solvePose } from './stick';
 import { Nunchaku } from './nunchaku';
@@ -10,6 +10,7 @@ import { bossForLevel, makeEnemy, pickKind, updateEnemy } from './enemies';
 import { Input } from './input';
 import { flowField, freeAt, generateArena, generateLevel, lineOfSight, moveWithCollision, solidAt, unstick, type Level } from './level';
 import { MOVES, type Move } from './moves';
+import { G1_BIOMES } from './constants';
 import { MUTATIONS, rollMutations, type Mutation } from './mutations';
 import { Particles, Texts } from './particles';
 import { pcircle, pfont, pfontO, pline, prect, pring, px } from './pixel';
@@ -25,13 +26,22 @@ export interface UIState {
   deaths: number; kills: number; bestCombo: number; choices: Mutation[]; save: SaveData | null; best: { level: number; score: number };
   muted: boolean; mutations: string[]; ageGain: number; hp: number; maxHp: number; accent: string;
   mode: GameMode; wave: number; survivalTime: number; bestWave: number; bestSurvivalScore: number; blood: BloodMode;
+  v2: boolean;
+  long: boolean;
 }
 export type GameMode = 'story' | 'survival';
+
+/** ONE FOR ALL (X), ported from game1: costs 25 to start, burns 8/s (about 12.5s on a full meter),
+ *  drops the WORLD to 30% speed while the player runs on real time at 4/3x — so the hero moves
+ *  roughly 4.4x faster than everything around him and auto-locks the nearest enemy. */
+const OFA_COST = 25, OFA_DRAIN = 8, OFA_WORLD = 0.3, OFA_PLAYER = 4 / 3, OFA_COL = '#57e6ff';
 
 const SAVE_KEY = 'kungfu_drifter_save_v1';
 const SURV_KEY = 'kungfu_drifter_survival_v1';
 const BLOOD_KEY = 'kungfu_drifter_blood_v1';
 const BEST_KEY = 'kungfu_drifter_best_v1';
+const V2_KEY = 'kungfu_drifter_v2';
+const LONG_KEY = 'kungfu_drifter_long';
 const easeOut = (t: number) => 1 - (1 - t) * (1 - t);
 
 function makePlayer(): Player {
@@ -40,9 +50,10 @@ function makePlayer(): Player {
     dashT: 0, dashCd: 0, dashDir: { x: 1, y: 0 }, iframes: 0, comboStr: '', comboTimer: 0, attackT: 0, attackPhase: 'none', moveKey: null,
     hitSet: [], buffered: null, parryT: 0, parryCd: 0, parryHit: false, focus: 100, weapon: 'fist', hasRifle: false, ammoP: 30, ammoR: 0,
     fireCd: 0, recoil: 0, lean: { x: 1, y: 0 }, stunT: 0, lastMoveName: '', focusDash: null, shootT: 0, attackElapsed: 0, sinceDash: 9, attackAim: 0,
+    brakeT: 0, brakeCd: 0, prevSpd: 0,
     z: 0, runT: 0, running: false, bloom: 0, muzzle: 0, muzzleMax: 0.06, muzzleX: 0, muzzleY: 0, muzzleA: 0, fatality: null, holdPose: 'idle', holdPoseT: 0, holdT: 0,
     dustT: 0, stepT: 0, travelHit: false,
-    hitTimes: {}, prevLimb: null, hasNunchaku: false, hasKatana: false, hasAxe: false, hasDual: false, bladeA: 0, bladeB: 0, bladePrevA: 0, chain: 0, chainLast: -9, chainSide: 1, rage: 0, rageOn: false, rageT: 0, rageDash: null, rageKills: 0, rhythm: [], style: 'none', styleStreak: 0, styleHeat: 0, flowStep: 0, sheatheT: 0, iaiVictims: [], strideHalf: 3, bodyAim: 0, vz: 0, jumpT: 0, jumpCd: 0, landT: 0, airborne: false, squash: 1, prevPose: 'idle', prevPoseT: 0, blend: 0, lastDir: { x: 1, y: 0 }, tkdCd: 0, tkdT: 0, tkdDir: { x: 1, y: 0 },
+    hitTimes: {}, prevLimb: null, hasNunchaku: false, hasKatana: false, hasAxe: false, hasDual: false, bladeA: 0, bladeB: 0, bladePrevA: 0, chain: 0, chainLast: -9, chainSide: 1, rage: 0, rageOn: false, rageT: 0, rageDash: null, rageKills: 0, ofa: 0, ofaActive: false, rhythm: [], style: 'none', styleStreak: 0, styleHeat: 0, flowStep: 0, sheatheT: 0, katanaPlan: 0, iaiVictims: [], strideHalf: 3, bodyAim: 0, vz: 0, jumpT: 0, jumpCd: 0, landT: 0, airborne: false, squash: 1, prevPose: 'idle', prevPoseT: 0, blend: 0, lastDir: { x: 1, y: 0 }, tkdCd: 0, tkdT: 0, tkdDir: { x: 1, y: 0 },
   };
 }
 
@@ -51,6 +62,18 @@ export class Game {
   ctx: CanvasRenderingContext2D;
   scene: HTMLCanvasElement;
   wctx: CanvasRenderingContext2D;
+  /** V2: screen-space layers (HUD, letterbox, vignette, wipe) get their own 1:1 buffer so that neither the world
+   *  nor the UI is ever resampled twice. V1 draws them straight onto the visible canvas, like the old build. */
+  hud: HTMLCanvasElement;
+  hctx: CanvasRenderingContext2D;
+  /** Which build of the look & feel is running.
+   *  V1 = exactly the old build (two-stage nearest upscale: scene -> fractional zoom blit -> CSS).
+   *  V2 = crisp single-stage pixels + the game1-flavoured ragdoll (wall slam bounce, dizzy stars, kickable bodies).
+   *  Toggle with V or the on-screen button; the choice is persisted. */
+  v2 = true;
+  /** LONG-LIMB mode (tombol L): badan/tangan/kaki 2.5x panjang normal — rig diskalakan seragam
+   *  dari telapak kaki di solvePose, jadi reach serangan & posisi senjata otomatis ikut. Persisted. */
+  longMode = false;
   input: Input;
   sfx = new Sfx();
   particles = new Particles();
@@ -77,8 +100,8 @@ export class Game {
   cam = { x: 0, y: 0 };
   camKick = { x: 0, y: 0 };
   camFocus: Vec | null = null;
-  zoom = 1;
-  zoomTarget = 1;
+  zoom = BASE_ZOOM;
+  zoomTarget = BASE_ZOOM;
   zoomKick = 0;
   cinematic = false;
   trauma = 0;
@@ -88,6 +111,9 @@ export class Game {
   timeScale = 1;
   slowT = 0;
   slowFactor = 1;
+  /** ONE FOR ALL: the enemy the player is auto-locked onto, plus the "press X" announcement latch */
+  lockTarget: Enemy | null = null;
+  ofaReadySaid = false;
   flashA = 0;
   flashC = '#ffffff';
   time = 0;
@@ -159,6 +185,12 @@ export class Game {
   bossWaveActive = false;
   ambushT = 20;
   nunchaku = new Nunchaku();
+  /** V2 (game1): idle flourish spin of the chain around the hand. */
+  nunFlourish = 0;
+  nunFlourishCd = 1;
+  /** V2 anti-monoton: tiap flourish di-roll — kadang 2 putaran, kadang 3, arah random */
+  nunFlourishTurns = 2;
+  nunFlourishDir = 1;
   katana = new Katana();
   blood = new Blood();
   nSpin = 0;
@@ -183,11 +215,19 @@ export class Game {
     this.scene.width = VIEW_W;
     this.scene.height = VIEW_H;
     this.wctx = this.scene.getContext('2d')!;
+    this.hud = document.createElement('canvas');
+    this.hud.width = VIEW_W;
+    this.hud.height = VIEW_H;
+    this.hctx = this.hud.getContext('2d')!;
     this.input = new Input(canvas);
     try {
       this.save = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
       this.best = JSON.parse(localStorage.getItem(BEST_KEY) || 'null') || { level: 0, score: 0 };
       this.bestSurvival = JSON.parse(localStorage.getItem(SURV_KEY) || 'null') || { wave: 0, score: 0 };
+      const vv = localStorage.getItem(V2_KEY);
+      if (vv === '0' || vv === '1') this.v2 = vv === '1';
+      const lv = localStorage.getItem(LONG_KEY);
+      if (lv === '0' || lv === '1') this.longMode = lv === '1';
       const bm = localStorage.getItem(BLOOD_KEY);
       if (bm === 'normal' || bm === 'gore' || bm === 'combined') this.blood.mode = bm;
     } catch { /* ignore */ }
@@ -233,7 +273,7 @@ export class Game {
       state: this.state, level: this.levelN, zoneName: z.name, zoneSub: z.sub, score: this.score, age: this.age, deathCounter: this.deathCounter,
       deaths: this.deaths, kills: this.kills, bestCombo: this.bestCombo, choices: this.choices, save: this.save, best: this.best,
       muted: this.sfx.muted, mutations: [...this.mutations], ageGain: this.ageGain, hp: this.player.hp, maxHp: this.maxHp(), accent: this.pal.accent,
-      mode: this.mode, wave: this.wave, survivalTime: this.survivalTime, bestWave: this.bestSurvival.wave, bestSurvivalScore: this.bestSurvival.score, blood: this.blood.mode,
+      mode: this.mode, wave: this.wave, survivalTime: this.survivalTime, bestWave: this.bestSurvival.wave, bestSurvivalScore: this.bestSurvival.score, blood: this.blood.mode, v2: this.v2, long: this.longMode,
     });
   }
 
@@ -296,9 +336,8 @@ export class Game {
     this.wave = 0; this.waveT = 0; this.survivalTime = 0; this.waveBudget = 0; this.trickle = 0; this.waveKills = 0; this.pendingChoice = false; this.bossWaveActive = false; this.ambushT = 20;
     this.state = 'playing';
     this.levelN = 1;
-    this.level = generateArena(Date.now() % 100000);
-    this.pal = ZONES[0].pal;
-    this.levelCanvas = buildLevelCanvas(this.level, this.pal);
+    this.level = generateArena(Date.now() % 100000, !this.v2);
+    this.applyPalette(true);
     this.levelCtx = this.levelCanvas.getContext('2d')!;
     this.blood.resetFloor(this.levelCanvas.width, this.levelCanvas.height);
     this.blood.solid = (x, y) => solidAt(this.level, x, y);
@@ -337,7 +376,7 @@ export class Game {
     this.levelN = this.waveLevel(); // enemy scaling (hp/speed/dmg) rides on levelN
     this.maxAlive = n <= 2 ? 4 + n : 8 + Math.floor(n * 1.3) + Math.floor(d * 16);
     const zone = Math.min(ZONES.length - 1, Math.floor((n - 1) / 4));
-    if (ZONES[zone].pal !== this.pal) { this.pal = ZONES[zone].pal; this.levelCanvas = buildLevelCanvas(this.level, this.pal); this.levelCtx = this.levelCanvas.getContext('2d')!; this.pools = []; }
+    this.applyPalette(true);
     this.sfx.setIntensity(Math.min(19, zone + Math.floor(n / 3)));
     this.waveBannerT = 2.4;
     this.say(this.bossWaveActive ? `WAVE ${n} - BOSS` : `WAVE ${n}`, this.bossWaveActive ? '#ff2a2a' : this.pal.accent, 3, 2.0);
@@ -454,9 +493,9 @@ export class Game {
     this.state = 'menu';
     this.mode = 'story';
     this.sfx.stopMusic();
-    this.level = generateArena(7);
-    this.pal = ZONES[1].pal;
-    this.levelCanvas = buildLevelCanvas(this.level, this.pal);
+    this.level = generateArena(7, !this.v2);
+    this.pal = this.v2 ? G1_BIOMES[1 % G1_BIOMES.length] : ZONES[1].pal;
+    this.levelCanvas = buildLevelCanvas(this.level, this.pal, this.v2);
     this.levelCtx = this.levelCanvas.getContext('2d')!;
     this.blood.resetFloor(this.levelCanvas.width, this.levelCanvas.height);
     this.blood.solid = (x, y) => solidAt(this.level, x, y);
@@ -482,8 +521,7 @@ export class Game {
 
   private loadLevel(n: number) {
     this.level = generateLevel(n);
-    this.pal = ZONES[this.level.zone].pal;
-    this.levelCanvas = buildLevelCanvas(this.level, this.pal);
+    this.applyPalette(true);
     this.levelCtx = this.levelCanvas.getContext('2d')!;
     this.blood.resetFloor(this.levelCanvas.width, this.levelCanvas.height);
     this.blood.solid = (x, y) => solidAt(this.level, x, y);
@@ -491,7 +529,7 @@ export class Game {
   }
 
   resetCamera() {
-    this.cinematic = false; this.zoomTarget = 1; this.zoom = 1; this.zoomKick = 0; this.camFocus = null; this.camKick.x = this.camKick.y = 0;
+    this.cinematic = false; this.zoomTarget = BASE_ZOOM; this.zoom = BASE_ZOOM; this.zoomKick = 0; this.camFocus = null; this.camKick.x = this.camKick.y = 0;
   }
 
   startLevel(n: number) {
@@ -503,6 +541,7 @@ export class Game {
     p.x = this.level.spawn.x; p.y = this.level.spawn.y; p.vx = p.vy = p.kx = p.ky = 0;
     p.dashT = 0; p.attackPhase = 'none'; p.buffered = null; p.comboStr = ''; p.parryT = 0; p.fatality = null; p.focusDash = null; p.stunT = 0; p.iframes = 0.5;
     p.z = 0; p.holdT = 0; p.runT = 0; p.running = false; p.bloom = 0; p.muzzle = 0; p.chain = 0; p.rageDash = null;
+    p.ofaActive = false; this.lockTarget = null; this.ofaReadySaid = p.ofa >= OFA_COST;
     p.hp = Math.min(Math.max(p.hp, 1), this.maxHp());
     this.resetCamera();
     this.fatalityTextT = 0; this.slowT = 0; this.timeScale = 1;
@@ -615,6 +654,7 @@ export class Game {
   die() {
     const p = this.player;
     p.hp = 0;
+    p.ofaActive = false; this.lockTarget = null;
     this.state = 'dead';
     this.deathT = 0;
     this.deaths++;
@@ -627,7 +667,7 @@ export class Game {
     this.splat(p.x, p.y, 10);
     this.corpses.push({ x: p.x, y: p.y, rot: p.aim, color: '#ffffff', color2: PLAYER_BAND, scale: 1, accessory: 'headband', vx: 0, vy: 0, spin: 0, t: 0, z: 0, vz: 0, gib: false, bounces: 0 });
     this.slow(1.5, 0.3);
-    this.cinematic = false; this.camFocus = null; this.zoomTarget = 1.3;
+    this.cinematic = false; this.camFocus = null; this.zoomTarget = 1.3 * BASE_ZOOM;
     this.pushUI();
   }
 
@@ -855,6 +895,8 @@ export class Game {
     const inp = this.input;
     if (inp.hit('m')) this.toggleMute();
     if (inp.hit('b')) this.cycleBlood();
+    if (inp.hit('v')) this.toggleV2();
+    if (inp.hit('l')) this.toggleLong();
     if (this.casingSfxCd > 0) this.casingSfxCd -= raw;
     if (this.hitMarkerT > 0) this.hitMarkerT -= raw;
     if (this.fatalityTextT > 0) this.fatalityTextT -= raw;
@@ -943,6 +985,7 @@ export class Game {
       return;
     }
     if (this.slowT > 0) { this.slowT -= raw; this.timeScale = lerp(this.timeScale, this.slowFactor, 0.4); }
+    else if (this.player.ofaActive) this.timeScale = lerp(this.timeScale, OFA_WORLD, raw * 9);
     else this.timeScale = lerp(this.timeScale, 1, 0.25);
     const dt = raw * this.timeScale;
     if (this.wipe) {
@@ -970,7 +1013,9 @@ export class Game {
 
   updateWorld(dt: number) {
     const p = this.player;
-    this.updatePlayer(dt);
+    // ONE FOR ALL: the world is slowed by timeScale, but the player keeps running on REAL time
+    this.updatePlayer(p.ofaActive ? this.rawDt * OFA_PLAYER : dt);
+    this.updateOfa(this.rawDt);
     this.flowT -= dt;
     if (this.flowT <= 0) { this.flow = flowField(this.level, p.x, p.y); this.flowT = 0.25; }
     const alive = this.enemies.filter((e) => !e.dead).length;
@@ -1013,22 +1058,40 @@ export class Game {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const c = this.corpses[i];
       c.t += dt;
+      if (this.v2 && c.t > 2.3) { this.corpses.splice(i, 1); continue; }   // game1: bodies fade & clear out
+      if (c.cd) c.cd -= dt;
+      c.sqx = (c.sqx ?? 1) + (1 - (c.sqx ?? 1)) * Math.min(1, dt * 9);
+      c.sqy = (c.sqy ?? 1) + (1 - (c.sqy ?? 1)) * Math.min(1, dt * 9);
       if (c.z > 0 || c.vz !== 0) {
         c.vz -= 500 * dt;
         c.z += c.vz * dt;
-        c.rot += c.spin * dt;
+        if (this.v2) {
+          // game1: salto HANYA saat benar-benar di udara; begitu menyentuh lantai badan berhenti
+          // berputar dan rotasinya meredah cepat (di-wrap dulu supaya tidak roll tambahan di tanah)
+          if (c.z > 0.5) c.rot += c.spin * dt;
+          else { c.rot = Math.atan2(Math.sin(c.rot), Math.cos(c.rot)); c.rot *= Math.pow(0.001, dt); c.spin = 0; }
+        } else c.rot += c.spin * dt;
         // bleeding while flying (a few drops)
         if (Math.random() < 0.18) this.blood.spray(c.x, c.y - 6 - c.z, Math.atan2(c.vy, c.vx) + Math.PI, 0.3, false);
         if (c.z <= 0) {
           c.z = 0;
           if (c.gib) { this.gibAt(c.x, c.y, c.color, c.scale, Math.atan2(c.vy, c.vx), 1.3); this.corpses.splice(i, 1); continue; }
           // ragdoll bounce: first impact bounces back up a little, then settles
-          if (c.vz < -90 && c.bounces < 2) { c.bounces++; c.vz = -c.vz * 0.35; c.vx *= 0.6; c.vy *= 0.6; c.spin *= 0.6; this.particles.smoke(c.x, c.y, 3, '#888', 20, 0.3); this.splat(c.x, c.y, 3); this.sfx.land(); continue; }
-          c.vz = 0; c.spin = 0; c.rot = Math.round(c.rot / Math.PI) * Math.PI; // lies flat
+          if (this.v2 ? (c.vz < -55 && c.bounces < 5) : (c.vz < -90 && c.bounces < 2)) {
+            c.bounces++;
+            c.vz = -c.vz * (this.v2 ? 0.52 : 0.35);           // game1: 0.52 = mayat memantul lebih hidup
+            if (this.v2) { c.sqx = 1.4; c.sqy = 0.58; }
+            c.vx *= this.v2 ? 0.78 : 0.6; c.vy *= this.v2 ? 0.78 : 0.6; c.spin *= this.v2 ? 0.8 : 0.6;
+            this.particles.smoke(c.x, c.y, 3, '#888', 20, 0.3); this.splat(c.x, c.y, 3); this.sfx.land();
+            continue;
+          }
+          c.vz = 0; c.spin = 0;
+          if (!this.v2) c.rot = Math.round(c.rot / Math.PI) * Math.PI; // V1: lies flat
           this.particles.smoke(c.x, c.y, 4, '#888', 25, 0.4);
           this.blood.pool(c.x, c.y + 1, 4 + c.scale);
         }
       }
+      if (this.v2 && c.z <= 0 && c.vz === 0) c.rot *= Math.pow(0.001, dt);  // game1: bodies settle upright
       if (Math.abs(c.vx) + Math.abs(c.vy) > 1) {
         const o = { x: c.x, y: c.y, r: 3 };
         const m = moveWithCollision(this.level, o, c.vx * dt, c.vy * dt);
@@ -1043,9 +1106,74 @@ export class Game {
           if (c.gib) { this.gibAt(c.x, c.y, c.color, c.scale, Math.atan2(-c.vy, -c.vx), 1.4); this.say('SPLAT!', '#ff3b3b', 2, 0.8); this.corpses.splice(i, 1); continue; }
           c.vz = Math.min(c.vz, 20);
         }
-        if (m.bx) c.vx *= -0.3;
-        if (m.by) c.vy *= -0.3;
-        const f = Math.max(0, 1 - (c.z > 0 ? 0.4 : 6) * dt); c.vx *= f; c.vy *= f;
+        const cb = this.v2 ? -0.55 : -0.3;                    // game1: corpse rebound 0.55
+        if (m.bx) c.vx *= cb;
+        if (m.by) c.vy *= cb;
+        if (this.v2 && (m.bx || m.by) && sp > 230) {
+          c.spin *= 0.85; c.sqx = 1.3; c.sqy = 0.7;
+          this.particles.spark(c.x, c.y - 6 - c.z, 5, '#ffffff', Math.atan2(-c.vy, -c.vx), 1.2, 130);
+          if (Math.random() < 0.5) this.texts.add(c.x, c.y - 18 - c.z, 'BONK!', '#ffffff', 1, 0.5);
+        }
+        const f = Math.max(0, 1 - (c.z > 0 ? 0.4 : this.v2 ? 7.7 : 6) * dt); c.vx *= f; c.vy *= f;  // V2: game1's 0.88/frame ground grip
+      }
+      // V2 (game1): running through a loose body kicks it out of the way instead of gliding over it
+      if (this.v2 && c.z < 6 && this.state === 'playing') {
+        const pl = this.player;
+        const ps = Math.hypot(pl.vx, pl.vy);
+        const d = dist(c.x, c.y, pl.x, pl.y);
+        if (ps > 55 && d < pl.r + 7 && d > 0.01) {
+          const a = Math.atan2(c.y - pl.y, c.x - pl.x);
+          c.vx = pl.vx * 1.3 + Math.cos(a) * 55; c.vy = pl.vy * 1.3 + Math.sin(a) * 55;
+          c.vz = Math.max(c.vz, 60); c.spin += rnd(-6, 6); c.bounces = 0;
+          c.sqx = 1.25; c.sqy = 0.75;
+          this.particles.smoke(c.x, c.y, 2, '#888', 20, 0.3);
+          if (Math.random() < 0.35) this.sfx.land();
+        }
+      }
+      // V2 (game1): a fast-flying body bowls over live enemies — momentum transfers, so flights
+      // stay short and funny instead of rocketing across the arena
+      if (this.v2 && c.z < 8 && (c.cd ?? 0) <= 0 && this.state === 'playing') {
+        const cspd = Math.hypot(c.vx, c.vy);
+        for (const e of this.enemies) {
+          if (e.dead || e.spawnT > 0 || e.boss) continue;
+          const d = dist(c.x, c.y, e.x, e.y);
+          if (d > (e.r ?? 6) + 6 || d < 0.01) continue;
+          const a2 = Math.atan2(e.y - c.y, e.x - c.x);
+          if (cspd > 130) {
+            e.hp = Math.max(1, e.hp - 8); e.flash = 0.12;
+            e.sqx = 1.35; e.sqy = 0.65;
+            e.kx = c.vx * 0.62 + Math.cos(a2) * 95; e.ky = c.vy * 0.62 + Math.sin(a2) * 95;
+            const ksp = Math.hypot(e.kx, e.ky); if (ksp > 320) { e.kx = e.kx / ksp * 320; e.ky = e.ky / ksp * 320; }
+            e.z = Math.max(e.z, 0.1); e.vz = Math.min(120, 55 + cspd * 0.1); e.down = 0; e.stun = 0; e.state = 'air'; e.pose = 'launched';
+            this.texts.add(e.x, e.y - 26, 'BODY CHECK!', this.pal.accent, 1, 0.6);
+            this.sfx.slam(); this.shake(0.25); this.hitstop = Math.max(this.hitstop, 0.02);
+            this.blood.spray(e.x - Math.cos(a2) * (e.r ?? 6), e.y - 5, a2, 4, false);
+            c.vx *= 0.4; c.vy *= 0.4; c.spin *= 0.55; c.cd = 0.32;
+          } else {
+            c.vx = Math.cos(a2) * e.speed * 0.9 + e.vx; c.vy = Math.sin(a2) * e.speed * 0.9 + e.vy;
+            c.vz = Math.max(c.vz, 26); c.spin += rnd(-4, 4); c.cd = 0.3;
+          }
+          break;
+        }
+      }
+    }
+    // V2 (game1): corpse vs corpse — bouncy pile-ups instead of overlapping planks
+    if (this.v2) {
+      for (let i = 0; i < this.corpses.length; i++) for (let j = i + 1; j < this.corpses.length; j++) {
+        const a = this.corpses[i], b = this.corpses[j];
+        if (Math.abs(a.z - b.z) > 16) continue;
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01, min = 11;
+        if (d >= min) continue;
+        const nx = dx / d, ny = dy / d, push = (min - d) / 2;
+        a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
+        const rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rel < 0) {
+          const imp = -rel * 0.72;
+          a.vx -= nx * imp; a.vy -= ny * imp; b.vx += nx * imp; b.vy += ny * imp;
+          a.spin += rnd(-3.5, 3.5); b.spin += rnd(-3.5, 3.5);
+          if (a.z < 1 && b.z < 1) { a.vz = Math.max(a.vz, 18); b.vz = Math.max(b.vz, 18); }
+          if (rel < -120) this.particles.smoke((a.x + b.x) / 2, a.y, 2, '#666', 20, 0.3);
+        }
       }
     }
   }
@@ -1062,7 +1190,8 @@ export class Game {
     if (p.muzzle > 0) p.muzzle -= raw;
     const mw = this.mouseWorld();
     if (!p.fatality && !p.focusDash) {
-      p.aim = Math.atan2(mw.y - (p.y - 6), mw.x - p.x);
+      if (p.ofaActive && this.lockTarget && !this.lockTarget.dead) p.aim = Math.atan2(this.lockTarget.y - (p.y - 6), this.lockTarget.x - p.x);
+      else p.aim = Math.atan2(mw.y - (p.y - 6), mw.x - p.x);
       if (p.attackPhase === 'windup' || p.attackPhase === 'active') p.aim = p.attackAim;
     }
     // Facing: while running with fists the body faces the direction of travel (otherwise the run cycle
@@ -1121,6 +1250,13 @@ export class Game {
     p.moving = il > 0 && !frozen;
     // walk cycle advances with actual ground speed so feet never slide
     const gspd = Math.hypot(p.vx, p.vy);
+    // ANIME BRAKE (V2): berhenti mendadak dari lari -> pose skid + debu di kaki
+    p.brakeT = Math.max(0, p.brakeT - dt); p.brakeCd -= dt;
+    if (!p.airborne && p.prevSpd > 115 && gspd < 70 && p.brakeCd <= 0 && p.dashT <= 0 && p.attackPhase === 'none') {
+      p.brakeT = 0.35; p.brakeCd = 0.8;
+      this.particles.smoke(p.x, p.y, 3, '#9a8f7d', 14, 0.3);
+    }
+    p.prevSpd = Math.max(gspd, p.prevSpd - 140 * dt); // recent top speed, meluruh ~0.55s
     // cadence: ~3.2 steps/s at full sprint (period 0.31s per step). Half-stride length follows from the speed so the
     // planted foot stays still in the world: strideHalf = speed / (2 * stepsPerSec)... clamped to what the legs can reach.
     if (!p.airborne && gspd > 5) {
@@ -1223,6 +1359,7 @@ export class Game {
     }
     if (p.parryT > 0) p.parryT -= dt;
     if (inp.hit('e')) this.tryFocus();
+    if (inp.hit('x')) this.tryOfa();
     if (inp.hit('f')) this.tryFatality();
     if (inp.hit('r')) this.tryRage();
     this.updateRage(dt, raw);
@@ -1302,7 +1439,7 @@ export class Game {
         const a0 = p.bladePrevA, a1 = p.bladeA;
         if (Math.abs(a1 - a0) > 0.2) this.katana.addArc(hx, hy, s.r * 0.95, a0, a1, '#bfe8ff', 0, 0.12);
       }
-      if (move.id === 'k_iaijutsu' && p.attackPhase === 'active') this.addAfterimage({ x: p.x, y: p.y - p.z, facing: p.facing, aim: p.aim, pose: 'k_iaijutsu', poseT: 0.5 }, '#bfe8ff', p.lean);
+      if ((move.id === 'k_iaijutsu' || (this.v2 && move.id === 'k_dashcut')) && p.attackPhase === 'active') this.addAfterimage({ x: p.x, y: p.y - p.z, facing: p.facing, aim: p.aim, pose: move.id === 'k_dashcut' ? 'k_crescent' : 'k_iaijutsu', poseT: 0.5 }, '#bfe8ff', p.lean);
     } else {
       // idle: blade points along the aim (chudan guard)
       const target = p.aim + (p.sheatheT > 0 ? 0 : 0);
@@ -1340,7 +1477,7 @@ export class Game {
     else if (p.dashT > 0) pose = 'dash';
     else if (p.moving && p.runT > 0.03) pose = 'run';
     const sk = solvePose(this.playerStickOpts(pose, t));
-    const hand = { x: p.x + sk.fhand.x, y: p.y + sk.fhand.y - p.z };
+    let hand = { x: p.x + sk.fhand.x, y: p.y + sk.fhand.y - p.z };
     // the held stick points from the neck through the hand (extends the forearm)
     let ndx = sk.fhand.x - sk.neck.x, ndy = sk.fhand.y - sk.neck.y;
     const nl = Math.hypot(ndx, ndy) || 1; ndx /= nl; ndy /= nl;
@@ -1378,9 +1515,55 @@ export class Game {
       // underarm tuck: the free stick is held folded back along the forearm (gentle pull toward the armpit)
       boost = { x: -ndx * 260, y: -ndy * 160 - 120 };
     }
+    if (this.v2) {
+      // V2: grip digerakkan pakai sweep arc ala game1 (wind back -> snap -> follow through),
+      // plus flourish spin saat idle dan drape guard — rantai jadi menjutrat kayak di STICK FIST
+      const LS = this.longMode ? 2.5 : 1;
+      const sh = { x: p.x, y: p.y - 4 * LS - p.z };
+      const sweep = (u: number, from: number, to: number, snap = 0.5) => {
+        if (u < 0.18) return from - Math.sign(to - from) * 0.5 * (u / 0.18);
+        const v = Math.min(1, (u - 0.18) / snap);
+        const e = 1 - Math.pow(1 - v, 3);
+        return from + (to - from) * e + Math.sin(v * Math.PI) * 0.12 * Math.sign(to - from);
+      };
+      const fdir = Math.cos(p.aim) >= 0 ? 1 : -1;
+      if (move && move.nunchaku) {
+        const u = Math.min(1, this.attackPoseT());
+        let ang = p.aim, rad = (8 + 5 * u) * LS;
+        switch (move.id) {
+          case 'n_tri2': case 'n_cross': ang = p.aim + sweep(u, 2.0, -1.0); break;
+          case 'n_whipcrack': case 'n_overhead': ang = p.aim + sweep(u, -2.3, 0.8, 0.34); rad = (6 + 8 * Math.min(1, Math.max(0, (u - 0.18) / 0.34))) * LS; break;
+          case 'n_choke': ang = p.aim + sweep(u, -1.6, 0.6, 0.3); break;
+          case 'n_tri4': ang = p.aim + sweep(u, 1.8, -0.6, 0.3); break;
+          case 'n_helicopter': case 'n_flyspin': case 'n_tornado': case 'n_lowsweep': ang = p.aim + u * Math.PI * 3; rad = 12 * LS; break;
+          case 'n_dragonlash': ang = p.aim + sweep(u, -2.4, 1.2, 0.3); rad = (9 + 6 * u) * LS; break;
+          default: ang = p.aim + sweep(u, -2.0, 1.0); break;
+        }
+        hand = { x: sh.x + Math.cos(ang) * rad, y: sh.y + Math.sin(ang) * rad };
+        void fdir;
+      } else if (p.dashT > 0) {
+        hand = { x: sh.x - Math.cos(p.aim) * 6 * LS, y: sh.y + 3 * LS };
+      } else {
+        this.nunFlourishCd -= dt; this.nunFlourish = Math.max(0, this.nunFlourish - dt);
+        if (this.nunFlourishCd <= 0 && this.nunFlourish === 0 && !p.moving && p.attackPhase === 'none') {
+          this.nunFlourish = 0.55; this.nunFlourishCd = 1.6 + Math.random() * 1.2;
+          this.nunFlourishTurns = Math.random() < 0.35 ? 3 : 2;
+          this.nunFlourishDir = Math.random() < 0.5 ? 1 : -1;
+        }
+        if (this.nunFlourish > 0) {
+          const fu = 1 - this.nunFlourish / 0.55, ga = p.aim + fu * Math.PI * 2 * this.nunFlourishTurns * this.nunFlourishDir;
+          hand = { x: sh.x + Math.cos(ga) * 7.5 * LS, y: sh.y + Math.sin(ga) * 7.5 * LS };
+          boost = null;
+        } else {
+          hand = { x: sh.x + Math.cos(p.aim) * 6.5 * LS, y: sh.y + (2.5 + Math.sin(p.aim) * 3) * LS };
+          boost = null;
+        }
+      }
+    }
     if (spin !== 0 && this.nunchaku.spinSpeed === 0) this.nunchaku.spinAng = Math.atan2(ndy, ndx);
     this.nunchaku.spinSpeed = spin;
-    this.nunchaku.update(hand, { x: ndx, y: ndy }, dt, spin, boost);
+    this.nunchaku.v2 = this.v2;
+    this.nunchaku.update(hand, { x: ndx, y: ndy }, dt, spin, boost, p.attackPhase !== 'none');
     // WHIP CRACK: the moment the chain snaps taut at full reach during the crack move
     if (move && (move.id === 'n_whipcrack' || move.id === 'n_overhead') && !p.travelHit && this.attackPoseT() > 0.33 && this.nunchaku.tautness() > 0.93 && this.nunchaku.tipSpeed > 300) {
       p.travelHit = true; // reused as 'cracked' flag for nunchaku moves
@@ -1637,6 +1820,14 @@ export class Game {
         const base = p.comboStr.startsWith('K') ? p.comboStr : 'K';
         const cand = base + k;
         key = MOVES[cand] ? cand : 'K' + k;
+        if (this.v2 && k === 'L') {
+          // V2 KATANA CHAIN VARIATIF (Takamura / Hyun's Dojo): tiap chain baru di-roll —
+          // kadang 1 tebas + SHEATHE FLASH, kadang 2 tebas + DASH CUT menerobos, kadang 3 + HEAVEN SPLITTER
+          if (p.comboStr === '') { const r = Math.random(); p.katanaPlan = r < 0.4 ? 1 : r < 0.7 ? 2 : 3; }
+          const nS = p.comboStr === 'KL' ? 1 : p.comboStr === 'KLL' ? 2 : p.comboStr === 'KLLL' ? 3 : 0;
+          if (p.katanaPlan === 1 && nS >= 1) key = 'KSHEATH';
+          else if (p.katanaPlan === 2 && nS >= 2) key = 'KDASH';
+        }
       }
       this.startAttack(key);
       return;
@@ -1740,6 +1931,23 @@ export class Game {
     if (move.katana || move.axe || move.dual) { p.iaiVictims = []; p.sheatheT = 0; p.bladeA = p.aim + (move.slash ? move.slash.from * p.facing : 0); p.bladePrevA = p.bladeA; p.bladeB = p.aim - (move.slash ? move.slash.from * p.facing : 0); }
     p.moveKey = key; p.attackPhase = 'windup'; p.attackT = move.windup; p.attackElapsed = 0; p.hitSet = []; p.hitTimes = {}; p.prevLimb = null; p.travelHit = false; this.prevBlade = null;
     p.comboTimer = 0.9;
+    // ONE FOR ALL lock-on: blink to the locked enemy when it is out of reach (game1's behaviour),
+    // so a full meter plays as "pick a target, delete it, the lock jumps to the next one".
+    if (p.ofaActive && this.lockTarget && !this.lockTarget.dead && key !== 'FOCUS') {
+      const lt = this.lockTarget;
+      const d = dist(lt.x, lt.y, p.x, p.y);
+      const reach = move.range * this.stats.meleeRange + 6;
+      if (d > reach && d < 240) {
+        const la = Math.atan2(lt.y - p.y, lt.x - p.x);
+        for (let i = 1; i <= 5; i++) {
+          const tt = i / 6;
+          this.addAfterimage({ x: lerp(p.x, lt.x, tt), y: lerp(p.y, lt.y, tt), facing: Math.cos(la) >= 0 ? 1 : -1, aim: la, scale: 1 }, OFA_COL, { x: Math.cos(la), y: Math.sin(la) });
+        }
+        const nx = lt.x - Math.cos(la) * (lt.r + p.r + 3), ny = lt.y - Math.sin(la) * (lt.r + p.r + 3);
+        if (this.isFree(nx, ny, p.r)) { p.x = nx; p.y = ny; p.iframes = Math.max(p.iframes, 0.1); p.aim = la; p.attackAim = la; p.facing = Math.cos(la) >= 0 ? 1 : -1; }
+        this.sfx.dash();
+      }
+    }
     if (key !== 'FOCUS') {
       // soft aim assist: snap toward the nearest enemy in a generous cone around the cursor direction
       const searchArc = Math.max(1.3, move.arc + 0.7);
@@ -1775,7 +1983,7 @@ export class Game {
   updateAttack(dt: number) {
     const p = this.player;
     if (p.attackPhase === 'none') {
-      if (p.comboStr) { p.comboTimer -= dt; if (p.comboTimer <= 0) p.comboStr = ''; }
+      if (p.comboStr) { p.comboTimer -= dt; if (p.comboTimer <= 0) { p.comboStr = ''; p.katanaPlan = 0; } }
       return;
     }
     const move = MOVES[p.moveKey!];
@@ -1822,9 +2030,14 @@ export class Game {
       if (p.buffered && p.attackT < move.recover * 0.65) { const b = p.buffered; p.buffered = null; if (this._pfk) { const k2 = this._pfk; this._pfk = null; this.startAttack(k2); } else this.startAttackInput(b); return; }
       if (p.attackT <= 0) {
         p.attackPhase = 'none'; p.buffered = null; p.comboTimer = 0.9;
-        if (move.finisher || p.moveKey === 'FOCUS' || p.moveKey === 'NH' || p.moveKey === 'NHL' || p.moveKey === 'LLH' || p.moveKey === 'KLLL') p.comboStr = '';
+        if (move.finisher || p.moveKey === 'FOCUS' || p.moveKey === 'NH' || p.moveKey === 'NHL' || p.moveKey === 'LLH' || p.moveKey === 'KLLL') { p.comboStr = ''; p.katanaPlan = 0; }
         if (p.moveKey === 'NLLLL' && p.buffered === 'L') { /* allow the 5th hit: keep the chain alive one more input */ p.comboStr = 'NLLLL'; }
-        if (move.katana) { p.sheatheT = 0.45; if (move.id === 'k_iaijutsu') { this.sfx.sheathe(); this.slow(0.25, 0.3); } }
+        if (move.katana) { p.sheatheT = 0.45; if (move.id === 'k_iaijutsu') { this.sfx.sheathe(); this.slow(0.25, 0.3); }
+          if (this.v2 && move.id === 'k_sheatheflash') {
+            // CLACK! bilah masuk sarung — sheen maksimal, ring putih, slow-mo sekejap
+            this.katana.sheen = 0.35; this.particles.ring(p.x, p.y - 6, 5, 24, '#ffffff', 0.28, 1);
+            this.sfx.sheathe(); this.slow(0.12, 0.25); this.shake(0.5);
+          } }
       }
     }
   }
@@ -1961,6 +2174,8 @@ export class Game {
       x: p.x, y: p.y, c: PLAYER_COLOR, c2: PLAYER_BAND, scale: 1, facing: p.facing, aim: pose === 'run' || pose === 'idle' || pose === 'n_idle' ? p.bodyAim : p.aim, look: p.aim, walk: p.walk, moving,
       pose, t, acc: 'headband', weapon: p.weapon === 'pistol' || p.weapon === 'rifle' ? p.weapon : 'none', flash: p.flash > 0, alpha: 1, outline: '#000000', eyes: '#111111', time: this.time, lean: p.lean,
       z: p.z, recoil: p.recoil, run: runBlend, squash: p.squash, vel: this.moveDirOf(p.vx + p.kx * 0.3, p.vy + p.ky * 0.3), stride: p.strideHalf, chainSide: p.chainSide,
+      anime: this.v2, brake: this.v2 ? clamp(p.brakeT / 0.35, 0, 1) : 0,
+      limbScale: this.longMode ? 2.5 : 1,
     };
   }
 
@@ -2040,6 +2255,7 @@ export class Game {
       this.particles.blood(hx, hy, 6, p.bladeA + Math.PI / 2, 90);
     }
     p.focus = Math.min(300, p.focus + 7 * this.stats.focusGain);
+    this.addOfa(dmg * 0.1);
     this.addCombo();
     this.meleeHits++;
     if ((move.id === 'chain' || p.style !== 'none') && !p.rageOn) { p.rage = Math.min(100, p.rage + (move.id === 'chain' ? 2.2 : move.finisher ? 5 : 3)); if (p.rage >= 100 && !this.rageReadySaid) { this.rageReadySaid = true; this.say('RAGE READY - PRESS R', '#ff2a2a', 2, 1.4); this.sfx.select(); } }
@@ -2089,6 +2305,7 @@ export class Game {
 
   staggerEnemy(e: Enemy) {
     e.stagger = e.boss ? 1.8 : 2.6; e.state = 'stagger'; e.down = 0; e.stun = 0; e.kx *= 0.4; e.ky *= 0.4; e.fuse = -1;
+    if (this.v2) { e.sqx = 1.25; e.sqy = 0.75; }
     this.sfx.stagger();
     this.particles.ring(e.x, e.y - 8, 2, 18, '#ffd700', 0.3, 1);
     if (this.finishCd <= 0 && dist(e.x, e.y, this.player.x, this.player.y) < 90) { this.finishCd = 4; this.sfx.announce(); }
@@ -2099,6 +2316,7 @@ export class Game {
     e.hp -= dmg;
     e.flash = 0.1;
     e.flinch = 0.12;
+    if (this.v2) { e.sqx = 1.35; e.sqy = 0.65; }        // juicy impact squeeze, game1 style
     e.structure += structure;
     const kbMul = (1 - e.kbRes) * (1 - e.kbRes * 0.5) * (e.stagger > 0 ? 1.25 : 1) * (e.z > 0 ? 0.6 : 1);
     e.kx += Math.cos(dir) * kb * kbMul; e.ky += Math.sin(dir) * kb * kbMul;
@@ -2110,6 +2328,7 @@ export class Game {
       const softened = e.structure >= e.maxStructure * 0.35 || e.hp <= e.maxHp * 0.55 || e.stagger > 0 || o.launch >= 50;
       if (!softened) { e.stun = Math.max(e.stun, 0.3); e.state = 'stun'; e.kx *= 0.5; e.ky *= 0.5; return; }
       e.vz = Math.max(e.vz, o.launch); e.z = Math.max(e.z, 0.1); e.down = 0; e.stun = 0; e.state = 'air'; e.pose = 'launched'; e.fuse = -1;
+      if (this.v2) { e.sqx = 0.8; e.sqy = 1.25; }       // stretch while flying
       this.sfx.launch();
       return;
     }
@@ -2130,7 +2349,27 @@ export class Game {
     }
   }
 
-  enemyLand(e: Enemy) {
+  enemyLand(e: Enemy, impact = 0) {
+    // V2 (game1 feel): a body that slams into the floor springs back up once before it goes down.
+    // Self-limiting: the rebound is only ~34% of the impact, so the next landing is always below the threshold.
+    if (this.v2 && impact > 260 && !e.dead) {
+      e.vz = impact * 0.34; e.z = 0.1;
+      e.sqx = 1.3; e.sqy = 0.7;
+      this.particles.smoke(e.x, e.y, 8, '#777', 50, 0.5);
+      this.particles.burst(e.x, e.y, 8, this.pal.wallTop, 110, 0.4);
+      this.splat(e.x, e.y, 6);
+      this.shake(0.4); this.sfx.land();
+      this.texts.add(e.x, e.y - 20, 'THUD!', '#ffffff', 1, 0.45);
+      return;
+    }
+    if (this.v2) {
+      e.sqx = 1.45; e.sqy = 0.55;        // hard landing pancake, game1 style
+      // V2: ragdoll rebah yang BERVARIASI seperti game1, bukan satu pose papan yang sama terus
+      const lat = Math.hypot(e.kx, e.ky);
+      const r = Math.random();
+      e.fall = lat > 60 ? (r < 0.5 ? 'knock' : 'curled') : r < 0.45 ? 'broken' : r < 0.8 ? 'knock' : 'curled';
+      e.fallFlip = Math.random() < 0.4 ? -1 : 1;
+    }
     this.particles.smoke(e.x, e.y, 6, '#888', 30, 0.45);
     this.particles.burst(e.x, e.y, 6, this.pal.wallTop, 80, 0.4);
     this.particles.blood(e.x, e.y - 3, 10, rnd(0, 6.3), 90);
@@ -2148,6 +2387,7 @@ export class Game {
     if (e.dead) return;
     e.dead = true;
     this.kills++;
+    this.addOfa(e.boss ? 15 : 7);
     this.score += Math.round(e.value * this.comboMult());
     const gy = e.y - 6 - e.z;
     // blood: classic particles (normal/combined) + the new gore emitters (gore/combined)
@@ -2158,11 +2398,20 @@ export class Game {
     this.addPool(e.x, e.y + 1, 4 + e.scale);
     // RAGDOLL: the body is flung along the hit direction, tumbling in the air, bouncing when it lands
     if (this.corpses.length > 80) this.corpses.shift();
-    const fling = Math.min(520, 120 + power * 0.9);
-    const up = airborne ? Math.max(e.vz, 120) : Math.min(260, 60 + power * 0.35);
+    // V2 uses game1's launch recipe: inherit fast momentum, else a capped toss + a 125-220 hop,
+    // so bodies tumble a funny short arc instead of rocketing across the arena
+    const cur = Math.hypot(e.vx, e.vy);
+    // game1: a body inherits the victim's OWN momentum when it was already moving (a walking enemy
+    // drops with a funny hop nearby); only already-launched victims rocket away
+    const useOwn = this.v2 && cur > 70;
+    const fling = useOwn ? cur * 1.05 : this.v2 ? Math.min(430, 110 + power * 0.85) : Math.min(520, 120 + power * 0.9);
+    const lang = useOwn ? Math.atan2(e.vy, e.vx) : dir;
+    const up = this.v2 ? Math.max(e.vz, e.z > 1 ? e.vz : 125 + Math.random() * 95) : airborne ? Math.max(e.vz, 120) : Math.min(260, 60 + power * 0.35);
     this.corpses.push({
       x: e.x, y: e.y, rot: dir + (Math.random() < 0.5 ? 0.3 : -0.3), color: e.color, color2: e.color2, scale: e.scale, accessory: e.accessory,
-      vx: Math.cos(dir) * fling, vy: Math.sin(dir) * fling * 0.75, spin: rnd(6, 14) * (Math.random() < 0.5 ? 1 : -1), t: 0, z: Math.max(e.z, 1), vz: up, gib: false, bounces: 0,
+      vx: Math.cos(lang) * fling, vy: Math.sin(lang) * fling * 0.75, spin: this.v2 ? 11 * (Math.cos(lang) >= 0 ? 1 : -1) * (0.7 + Math.random() * 0.6) : rnd(6, 14) * (Math.random() < 0.5 ? 1 : -1), t: 0, z: Math.max(e.z, 1), vz: up, gib: false, bounces: 0,
+      face: Math.cos(lang) >= 0 ? 1 : -1,
+      sqx: 0.8, sqy: 1.3,
     });
     if (!silent) { this.sfx.kill(); this.shake(0.3 + Math.min(0.4, power / 900)); this.hitstop = Math.max(this.hitstop, 0.045); }
     if (e.kind === 'bomber') this.pendingBooms.push({ x: e.x, y: e.y, t: 0.05, r: 30, dmg: 2, fromPlayer: true });
@@ -2287,6 +2536,7 @@ export class Game {
     if (e.structure >= e.maxStructure) this.staggerEnemy(e);
     this.say('PARRY!', '#35f0ff', 2, 0.7);
     p.focus = Math.min(300, p.focus + 45 * this.stats.focusGain);
+    this.addOfa(5);
     this.addCombo();
   }
 
@@ -2336,6 +2586,106 @@ export class Game {
     this.particles.ring(p.x, p.y - 6, 2, 30, this.pal.accent, 0.3, 2);
   }
 
+  /** V2 paints the terrain with STICK FIST's exact biome hexes (100% match); V1 keeps game2's zone palettes.
+   *  Story levels walk the biome list by zone, survival picks one per arena seed — just like game1's endless. */
+  applyPalette(rebuild = false) {
+    const zone = this.level.zone;
+    const pal = this.v2 ? G1_BIOMES[(this.mode === 'survival' ? this.level.seed : zone) % G1_BIOMES.length] : ZONES[zone].pal;
+    if (pal === this.pal && !rebuild) return;
+    this.pal = pal;
+    this.levelCanvas = buildLevelCanvas(this.level, this.pal, this.v2);
+    this.levelCtx = this.levelCanvas.getContext('2d')!;
+    this.pools = [];
+    this.blood.resetFloor(this.levelCanvas.width, this.levelCanvas.height);
+  }
+
+  /** Switches between the classic look (V1) and the crisp/ragdoll update (V2) so both can be compared live. */
+  toggleV2() {
+    this.v2 = !this.v2;
+    this.applyPalette(true);
+    try { localStorage.setItem(V2_KEY, this.v2 ? '1' : '0'); } catch { /* private mode */ }
+    this.say(this.v2 ? 'V2 - CRISP PIXELS + RAGDOLL' : 'V1 - CLASSIC LOOK', this.v2 ? '#7df9ff' : '#9a9a9a', 2, 1.6);
+    this.sfx.select();
+    this.pushUI();
+  }
+
+  /** LONG-LIMB mode: badan/tangan/kaki 2.5x panjang normal (tombol L atau tombol HUD). */
+  toggleLong() {
+    this.longMode = !this.longMode;
+    try { localStorage.setItem(LONG_KEY, this.longMode ? '1' : '0'); } catch { /* private mode */ }
+    this.say(this.longMode ? 'LONG LIMBS - BADAN/TANGAN/KAKI x2.5' : 'NORMAL LIMBS', this.longMode ? '#ffd27f' : '#9a9a9a', 2, 1.6);
+    this.sfx.select();
+    this.pushUI();
+  }
+
+  /** V2 present: one nearest-neighbour blit per layer straight onto the display-sized backing store. An art pixel
+   *  is scaled exactly once, which is what keeps edges hard — V1 scaled twice (zoom blit, then CSS) and that
+   *  double resample is what made the image look soft and dirty at BASE_ZOOM 1.4. */
+  present(sw: number, sh: number) {
+    if (!this.v2) return;
+    const dst = this.ctx;
+    const bw = this.canvas.width || VIEW_W, bh = this.canvas.height || VIEW_H;
+    dst.setTransform(1, 0, 0, 1, 0, 0);
+    dst.globalAlpha = 1;
+    dst.imageSmoothingEnabled = false;
+    dst.drawImage(this.scene, 0, 0, sw, sh, 0, 0, bw, bh);
+    dst.drawImage(this.hud, 0, 0, VIEW_W, VIEW_H, 0, 0, bw, bh);
+  }
+
+  /** ONE FOR ALL (X) — game1's slow-mo super mode. The world drops to 30%, you run on real time,
+   *  every strike auto-locks and blinks to the nearest enemy until the meter burns out. */
+  tryOfa() {
+    const p = this.player;
+    if (p.ofaActive || p.fatality || p.focusDash || p.rageDash || p.holdT > 0 || p.stunT > 0) return;
+    if (p.ofa < OFA_COST) { this.texts.add(p.x, p.y - 22, 'OFA NOT READY', '#3a6a78', 1, 0.5); this.sfx.empty(); return; }
+    p.ofaActive = true;
+    this.ofaReadySaid = true;
+    this.say('ONE FOR ALL', OFA_COL, 3, 1.2);
+    this.sfx.announce(); this.sfx.focus();
+    this.flash(OFA_COL, 0.5); this.shake(0.8); this.slow(0.5, 0.25);
+    this.particles.shockwave(p.x, p.y - 4, 60, OFA_COL, 0.5);
+    this.particles.ring(p.x, p.y - 6, 2, 26, '#ffffff', 0.35, 2);
+    p.iframes = Math.max(p.iframes, 0.6);
+    if (!this.cinematic) this.zoomTarget = 0.94 * BASE_ZOOM;   // slight zoom-out, same as game1
+  }
+
+  /** ONE FOR ALL upkeep: auto-lock the nearest enemy, burn the meter, throw the lightning aura. */
+  updateOfa(raw: number) {
+    const p = this.player;
+    if (!p.ofaActive) { if (this.lockTarget) this.lockTarget = null; return; }
+    let best: Enemy | null = null, bd = 340;
+    for (const e of this.enemies) {
+      if (e.dead || e.spawnT > 0) continue;
+      const d = dist(e.x, e.y, p.x, p.y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    this.lockTarget = best;                       // recomputed every frame: a kill jumps the lock on
+    p.ofa = Math.max(0, p.ofa - raw * OFA_DRAIN);
+    if (Math.random() < 0.85) {
+      const a = rnd(0, Math.PI * 2);
+      this.particles.spark(p.x + Math.cos(a) * 6, p.y - 6 - p.z + Math.sin(a) * 6, 1, Math.random() < 0.6 ? '#7df9ff' : '#ffffff', a, 0.8, 45);
+    }
+    if (Math.random() < 0.35) this.addAfterimage({ x: p.x, y: p.y, facing: p.facing, aim: p.aim, scale: 1 }, OFA_COL, { x: Math.cos(p.aim), y: Math.sin(p.aim) });
+    if (p.ofa <= 0) {
+      p.ofa = 0; p.ofaActive = false; this.lockTarget = null; this.ofaReadySaid = false;
+      this.say('ONE FOR ALL END', '#8a8a8a', 1, 0.8);
+      this.particles.ring(p.x, p.y - 6, 2, 18, OFA_COL, 0.3, 1);
+      if (!this.cinematic) this.zoomTarget = BASE_ZOOM;
+    }
+  }
+
+  /** Adds ONE FOR ALL charge and announces once when X becomes available. */
+  addOfa(n: number) {
+    const p = this.player;
+    if (p.ofaActive || !(n > 0)) return;
+    p.ofa = Math.min(100, p.ofa + n);
+    if (p.ofa >= OFA_COST && !this.ofaReadySaid) {
+      this.ofaReadySaid = true;
+      this.say('ONE FOR ALL READY - PRESS X', OFA_COL, 2, 1.4);
+      this.sfx.select();
+    }
+  }
+
   // ------------------------------------------------------------------ FATALITY
   tryFatality() {
     const p = this.player;
@@ -2373,7 +2723,7 @@ export class Game {
     best.stagger = 10; best.state = kind === 'stomp' ? 'down' : 'stagger'; best.pose = kind === 'stomp' ? 'down' : 'stagger'; best.kx = best.ky = 0; best.vx = best.vy = 0; best.z = 0; best.vz = 0;
     if (kind !== 'stomp') best.down = 0;
     best.stun = 0; best.fuse = -1; best.flinch = 0; best.tele = null; this.releaseToken(best);
-    this.cinematic = true; this.zoomTarget = 1.45; this.camFocus = { x: (p.x + best.x) / 2, y: (p.y + best.y) / 2 };
+    this.cinematic = true; this.zoomTarget = 1.45 * BASE_ZOOM; this.camFocus = { x: (p.x + best.x) / 2, y: (p.y + best.y) / 2 };
     this.slowFactor = 0.45; this.slowT = 0.2;
     p.iframes = 6;
     for (const o of this.enemies) if (o !== best && !o.dead) o.attackCd = Math.max(o.attackCd, 1.5);
@@ -2394,6 +2744,8 @@ export class Game {
     this.camFocus = { x: (p.x + F.tx) / 2, y: (p.y + F.ty) / 2 };
     const dir = F.dir, cd = Math.cos(dir), sd = Math.sin(dir);
     const since = F.t - F.hitT;
+    // V2: fatality sepas game1 (~0,97 dtk total) — aftermath dipangkas, build lama tetap 1,6-1,7 dtk
+    const ks = this.v2 ? 0.35 : 1;
     switch (F.kind) {
       case 'uppercut': {
         if (F.step === 0) {
@@ -2412,7 +2764,7 @@ export class Game {
           p.holdPose = 'uppercut'; p.holdPoseT = clamp(0.3 + since * 2.5, 0.3, 0.6);
           if (since > 0.8) { F.step = 2; }
         } else { p.holdPose = 'flex'; }
-        if (F.hit && since > 1.7) this.endFatality();
+        if (F.hit && since > 1.7 * ks) this.endFatality();
         break;
       }
       case 'runpunch': {
@@ -2435,8 +2787,8 @@ export class Game {
           if (F.hit && since > 0.12) F.step = 2;
           if (m.bx || m.by || F.t > 1.4) { if (!F.hit) { this.endFatality(); return; } F.step = 2; }
         } else {
-          p.holdPose = since > 0.85 ? 'flex' : 'runpunch'; p.holdPoseT = 0.5;
-          if (since > 1.7) this.endFatality();
+          p.holdPose = since > 0.85 * ks ? 'flex' : 'runpunch'; p.holdPoseT = 0.5;
+          if (since > 1.7 * ks) this.endFatality();
         }
         break;
       }
@@ -2464,8 +2816,8 @@ export class Game {
             this.particles.smoke(p.x, p.y, 6, '#888', 30, 0.4); this.sfx.land(); this.shake(0.2);
           }
         } else {
-          p.holdPose = since > 0.85 ? 'flex' : 'crouch';
-          if (since > 1.7) this.endFatality();
+          p.holdPose = since > 0.85 * ks ? 'flex' : 'crouch';
+          if (since > 1.7 * ks) this.endFatality();
         }
         break;
       }
@@ -2479,7 +2831,7 @@ export class Game {
           p.holdPose = 'grab'; p.holdPoseT = 1;
           if (target) { target.aim += raw * 14 * p.facing; target.facing = Math.cos(target.aim) >= 0 ? 1 : -1; }
           if (F.t >= 0.52) { F.step = 2; this.finishBlow(target, F); }
-        } else { p.holdPose = since > 0.7 ? 'flex' : 'grab'; p.holdPoseT = 1; if (since > 1.6) this.endFatality(); }
+        } else { p.holdPose = since > 0.7 * ks ? 'flex' : 'grab'; p.holdPoseT = 1; if (since > 1.6 * ks) this.endFatality(); }
         break;
       }
       case 'kneedrop': {
@@ -2498,7 +2850,7 @@ export class Game {
           p.z = 26 * Math.sin(q * Math.PI);
           this.addAfterimage({ x: p.x, y: p.y - p.z, facing: p.facing, aim: p.aim, pose: 'kneedrop', poseT: 0.3 }, this.pal.accent, p.lean);
           if (q >= 1) { p.z = 0; F.step = 2; p.holdPoseT = 0.6; this.finishBlow(target, F); this.particles.shockwave(p.x, p.y, 34, '#ffffff', 0.3); this.particles.smoke(p.x, p.y, 10, '#777', 40, 0.5); }
-        } else { p.holdPose = since > 0.9 ? 'flex' : 'kneedrop'; p.holdPoseT = since > 0.9 ? 0 : 0.6; if (since > 1.7) this.endFatality(); }
+        } else { p.holdPose = since > 0.9 * ks ? 'flex' : 'kneedrop'; p.holdPoseT = since > 0.9 * ks ? 0 : 0.6; if (since > 1.7 * ks) this.endFatality(); }
         break;
       }
       case 'spinkick': {
@@ -2510,7 +2862,7 @@ export class Game {
           F.stepT += raw;
           p.holdPose = 'spin'; p.holdPoseT = 0.15 + 0.5 * Math.min(1, F.stepT / 0.3);
           if (F.stepT >= 0.3) { F.step = 2; this.finishBlow(target, F); }
-        } else { p.holdPose = since > 0.8 ? 'flex' : 'spin'; p.holdPoseT = since > 0.8 ? 0 : 0.66; if (since > 1.6) this.endFatality(); }
+        } else { p.holdPose = since > 0.8 * ks ? 'flex' : 'spin'; p.holdPoseT = since > 0.8 ? 0 : 0.66; if (since > 1.6 * ks) this.endFatality(); }
         break;
       }
       case 'stomp': {
@@ -2522,7 +2874,7 @@ export class Game {
           F.stepT += raw;
           p.holdPose = 'stomp'; p.holdPoseT = 0.5 + 0.1 * Math.min(1, F.stepT / 0.07);
           if (F.stepT >= 0.07) { F.step = 2; this.finishBlow(target, F); this.particles.shockwave(p.x + cd * 6, p.y, 24, '#ffffff', 0.25); }
-        } else { p.holdPose = since > 0.8 ? 'flex' : 'stomp'; p.holdPoseT = since > 0.8 ? 0 : 0.6; if (since > 1.6) this.endFatality(); }
+        } else { p.holdPose = since > 0.8 * ks ? 'flex' : 'stomp'; p.holdPoseT = since > 0.8 ? 0 : 0.6; if (since > 1.6 * ks) this.endFatality(); }
         break;
       }
       case 'hammer': {
@@ -2535,7 +2887,7 @@ export class Game {
           F.stepT += raw;
           p.holdPose = 'hammer'; p.holdPoseT = 0.45 + 0.15 * Math.min(1, F.stepT / 0.08);
           if (F.stepT >= 0.08) { F.step = 2; this.finishBlow(target, F); this.particles.shockwave(p.x + cd * 8, p.y, 30, '#ffffff', 0.3); }
-        } else { p.holdPose = since > 0.8 ? 'flex' : 'hammer'; p.holdPoseT = since > 0.8 ? 0 : 0.6; if (since > 1.6) this.endFatality(); }
+        } else { p.holdPose = since > 0.8 * ks ? 'flex' : 'hammer'; p.holdPoseT = since > 0.8 ? 0 : 0.6; if (since > 1.6 * ks) this.endFatality(); }
         break;
       }
       case 'n_garrote': {
@@ -2547,7 +2899,7 @@ export class Game {
           p.holdPose = 'n_garrote'; p.holdPoseT = 1;
           if (target) { target.x = F.tx + Math.sin(F.t * 40) * 1.5; target.flash = Math.sin(F.t * 30) > 0 ? 0.05 : 0; }
           if (F.t >= 0.95) { F.step = 2; this.finishBlow(target, F); }
-        } else { p.holdPose = since > 0.7 ? 'flex' : 'n_garrote'; p.holdPoseT = 1; if (since > 1.6) this.endFatality(); }
+        } else { p.holdPose = since > 0.7 * ks ? 'flex' : 'n_garrote'; p.holdPoseT = 1; if (since > 1.6 * ks) this.endFatality(); }
         break;
       }
       case 'n_drum': {
@@ -2564,14 +2916,14 @@ export class Game {
         } else if (F.step === 10) {
           p.holdPose = 'n_overhead'; p.holdPoseT = 0.2;
           if (F.t > 0.1 + 10 * 0.07 + 0.3) { F.step = 11; p.holdPoseT = 0.45; this.finishBlow(target, F); }
-        } else { p.holdPose = since > 0.8 ? 'flex' : 'n_overhead'; p.holdPoseT = 0.5; if (since > 1.6) this.endFatality(); }
+        } else { p.holdPose = since > 0.8 * ks ? 'flex' : 'n_overhead'; p.holdPoseT = 0.5; if (since > 1.6 * ks) this.endFatality(); }
         break;
       }
       case 'n_decap': {
         // helicopter spin-up, then the chain takes the head clean off
         p.holdPose = 'n_helicopter'; p.holdPoseT = F.t;
         if (F.step === 0) { if (F.t >= 0.6) { F.step = 1; this.finishBlow(target, F); } }
-        else { p.holdPose = since > 0.8 ? 'flex' : 'n_helicopter'; if (since > 1.6) this.endFatality(); }
+        else { p.holdPose = since > 0.8 * ks ? 'flex' : 'n_helicopter'; if (since > 1.6 * ks) this.endFatality(); }
         break;
       }
       case 'k_bisect': {
@@ -2583,7 +2935,7 @@ export class Game {
         } else if (F.step === 1) {
           F.stepT += raw; p.holdPose = 'k_heaven'; p.holdPoseT = 0.3 + 0.3 * Math.min(1, F.stepT / 0.08); p.bladeA = p.aim + 0.4 * p.facing;
           if (F.stepT >= 0.09) { F.step = 2; this.finishBlow(target, F); }
-        } else { p.holdPose = since > 0.9 ? 'k_sheathe' : 'k_heaven'; p.holdPoseT = since > 0.9 ? Math.min(1, (since - 0.9) / 0.5) : 0.62; if (since > 1.7) this.endFatality(); }
+        } else { p.holdPose = since > 0.9 * ks ? 'k_sheathe' : 'k_heaven'; p.holdPoseT = since > 0.9 * ks ? Math.min(1, (since - 0.9) / 0.5) : 0.62; if (since > 1.7 * ks) this.endFatality(); }
         break;
       }
       case 'k_behead': {
@@ -2594,7 +2946,7 @@ export class Game {
         } else if (F.step === 1) {
           F.stepT += raw; const q = Math.min(1, F.stepT / 0.08); p.holdPose = 'k_crescent'; p.holdPoseT = 0.28 + 0.32 * q; p.bladeA = p.aim + (2.2 - 3.6 * q) * p.facing;
           if (F.stepT >= 0.09) { F.step = 2; this.finishBlow(target, F); }
-        } else { p.holdPose = since > 0.9 ? 'k_sheathe' : 'k_crescent'; p.holdPoseT = since > 0.9 ? Math.min(1, (since - 0.9) / 0.5) : 0.6; if (since > 1.7) this.endFatality(); }
+        } else { p.holdPose = since > 0.9 * ks ? 'k_sheathe' : 'k_crescent'; p.holdPoseT = since > 0.9 * ks ? Math.min(1, (since - 0.9) / 0.5) : 0.6; if (since > 1.7 * ks) this.endFatality(); }
         break;
       }
       case 'k_impale': {
@@ -2607,7 +2959,7 @@ export class Game {
           p.holdPose = 'k_impale'; p.holdPoseT = q; p.bladeA = p.aim - 0.9 * q * p.facing * 0.5 - 0.5 * q;
           if (target) { target.z = 10 * q; target.pose = 'launched'; target.rot = 0.6 * q * p.facing; target.x = p.x + cd * (target.r + p.r + 10); target.y = p.y + sd * (target.r + p.r + 10) + 0.01; if (Math.random() < 0.6) this.particles.blood(target.x, target.y - 6 - target.z, 2, Math.PI / 2, 40); }
           if (F.stepT >= 0.65) { F.step = 2; this.finishBlow(target, F); }
-        } else { p.holdPose = since > 0.9 ? 'k_sheathe' : 'k_impale'; p.holdPoseT = since > 0.9 ? Math.min(1, (since - 0.9) / 0.5) : 1; if (since > 1.7) this.endFatality(); }
+        } else { p.holdPose = since > 0.9 * ks ? 'k_sheathe' : 'k_impale'; p.holdPoseT = since > 0.9 * ks ? Math.min(1, (since - 0.9) / 0.5) : 1; if (since > 1.7 * ks) this.endFatality(); }
         break;
       }
       case 'rush': {
@@ -2634,7 +2986,7 @@ export class Game {
           }
         } else {
           p.holdPose = since > 0.75 ? 'flex' : 'palm'; p.holdPoseT = 0.5;
-          if (since > 1.6) this.endFatality();
+          if (since > 1.6 * ks) this.endFatality();
         }
         break;
       }
@@ -2654,6 +3006,7 @@ export class Game {
     this.particles.spark(hx, hy, 16, '#ffffff', dir, 1.2, 260);
     this.blood.arterial(hx, hy, dir, 1.0); this.blood.fountain(e.x, e.y - 6, 16); this.blood.mist(hx, hy, dir, 6);
     p.focus = Math.min(300, p.focus + (F.perfect ? 60 : 30) * this.stats.focusGain);
+    this.addOfa(F.perfect ? 10 : 6);
     if (F.perfect) this.heal(1 + this.stats.takedownHeal);
     this.score += F.perfect ? 150 : 75;
     p.iframes = Math.max(p.iframes, 2.5);
@@ -2786,7 +3139,7 @@ export class Game {
   endFatality() {
     const p = this.player;
     p.fatality = null; p.holdT = 0; p.z = 0; p.iframes = Math.max(0.5, Math.min(p.iframes, 1));
-    this.cinematic = false; this.zoomTarget = 1; this.camFocus = null; this.slowT = 0;
+    this.cinematic = false; this.zoomTarget = BASE_ZOOM; this.camFocus = null; this.slowT = 0;
   }
 
   // ------------------------------------------------------------------ physics
@@ -2807,8 +3160,9 @@ export class Game {
           this.say('CRASH!', '#ffd700', 2, 0.8);
           if (e.structure >= e.maxStructure) this.staggerEnemy(e);
         }
-        if (bx) e.kx *= -0.25;
-        if (by) e.ky *= -0.25;
+        const bounce = this.v2 ? -0.35 : -0.25;   // V2: bodies spring off the wall harder (game1 feel)
+        if (bx) e.kx *= bounce;
+        if (by) e.ky *= bounce;
       }
       if (kSpeed > 150) {
         for (const pr of this.props) {
@@ -2857,13 +3211,19 @@ export class Game {
     this.particles.impact(hit.x, hit.y - 6, 6, '#ffffff');
   }
   wallSlam(e: Enemy, speed: number) {
-    const dmg = 3 + speed / 70;
+    // V2 borrows game1's wall slam: it hurts much more, breaks posture, and leaves the victim wobbling.
+    const dmg = this.v2 ? 7 + speed / 26 : 3 + speed / 70;
     e.hp -= dmg;
     e.flash = 0.12;
-    e.structure += 35 * this.stats.structureDmg;
+    e.structure += (this.v2 ? 65 : 35) * this.stats.structureDmg;
     this.sfx.slam();
-    this.shake(0.5);
-    this.hitstop = Math.max(this.hitstop, 0.05);
+    this.shake(this.v2 ? 0.9 : 0.5);
+    this.hitstop = Math.max(this.hitstop, this.v2 ? 0.09 : 0.05);
+    if (this.v2) {
+      const dir = Math.atan2(-e.ky, -e.kx);
+      this.particles.spark(e.x, e.y - 6 - e.z, 12, '#ffffff', dir, 1.4, 250);
+      this.particles.ring(e.x, e.y - 6 - e.z, 2, 16, '#ffffff', 0.2, 1);
+    }
     this.particles.smoke(e.x, e.y, 8, '#999', 40, 0.5);
     this.particles.burst(e.x, e.y - 6, 10, this.pal.wallTop, 120, 0.5, 2, 3);
     this.particles.blood(e.x, e.y - 6, 18, Math.atan2(-e.ky, -e.kx), 110);
@@ -2873,12 +3233,22 @@ export class Game {
     const wx = e.x + (e.kx / kl) * 8, wy = e.y - 6 + (e.ky / kl) * 8;
     this.splat(wx, wy, 16, '#8a0000', true);
     for (let i = 0; i < 6; i++) this.stamp(wx + rnd(-4, 4), wy + i * 2, '#6e0000', 1, true);
-    this.say('WALL SLAM!', this.pal.accent2, 1, 0.7);
-    this.score += 15;
+    this.say('WALL SLAM!', this.pal.accent2, this.v2 ? 2 : 1, this.v2 ? 0.9 : 0.7);
+    this.score += this.v2 ? 25 : 15;
     this.addCombo();
     if (e.z > 0) e.vz = Math.min(e.vz, 0);
     if (e.hp <= 0) { this.killEnemy(e, Math.atan2(-e.ky, -e.kx), 300, false, true); return; }
     if (e.structure >= e.maxStructure && e.stagger <= 0) this.staggerEnemy(e);
+    else if (this.v2 && speed > 240 && !e.boss && e.z <= 0) {
+      // V2 hard slam (game1): peeled off the wall and left standing, swaying, stars round the head.
+      // Softer slams keep game2's knockdown — and thanks to updateEnemy they wake up dizzy anyway.
+      e.stun = Math.max(e.stun, 0.55 + speed / 800);
+      e.state = 'stun'; e.pose = 'hurt'; e.down = 0;
+      e.sqx = 1.4; e.sqy = 0.6;
+      e.attackCd = Math.max(e.attackCd, e.stun + 0.35);
+      e.vx = 0; e.vy = 0;
+      if (Math.random() < 0.6) this.texts.add(e.x, e.y - 24 - e.z, 'BONK!', '#ffffff', 1, 0.5);
+    }
     else if (!e.boss && e.stagger <= 0 && e.z <= 0) { e.down = 1.2; e.state = 'down'; }
     else if (e.boss) { e.stun = Math.max(e.stun, 0.5); e.state = 'stun'; }
   }
@@ -3082,20 +3452,31 @@ export class Game {
     this.camKick.x *= kd; this.camKick.y *= kd;
     this.zoomKick = Math.max(0, this.zoomKick - raw * 0.6);
     this.zoom = lerp(this.zoom, this.zoomTarget + this.zoomKick, 1 - Math.exp(-7 * raw));
-    if (Math.abs(this.zoom - 1) < 0.004 && this.zoomTarget === 1 && this.zoomKick === 0) this.zoom = 1;
+    if (Math.abs(this.zoom - BASE_ZOOM) < 0.004 && this.zoomTarget === BASE_ZOOM && this.zoomKick === 0) this.zoom = BASE_ZOOM;
   }
 
   // ------------------------------------------------------------------ render
   render() {
+    const v2 = this.v2;
     const ctx = this.wctx;
-    const sc = this.ctx;
+    const sc = v2 ? this.hctx : this.ctx;
     const p = this.player;
     const pal = this.pal;
+    // V2 draws only the slice of the world that is actually visible (VIEW/zoom art pixels) at 1:1, so every
+    // primitive lands on whole buffer pixels and nothing gets antialiased by a fractional transform.
+    const sw = v2 ? clamp(Math.ceil(VIEW_W / this.zoom), 1, VIEW_W) : VIEW_W;
+    const sh = v2 ? clamp(Math.ceil(VIEW_H / this.zoom), 1, VIEW_H) : VIEW_H;
     ctx.imageSmoothingEnabled = false;
     sc.imageSmoothingEnabled = false;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (v2) { sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, VIEW_W, VIEW_H); }
     ctx.fillStyle = pal.bg;
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    const ox = Math.round(-this.cam.x + this.shakeX + this.camKick.x), oy = Math.round(-this.cam.y + this.shakeY + this.camKick.y);
+    ctx.fillRect(0, 0, sw, sh);
+    const half = v2 ? sw / 2 - VIEW_W / 2 : 0, halfY = v2 ? sh / 2 - VIEW_H / 2 : 0;
+    const ox = Math.round(half - this.cam.x + this.shakeX + this.camKick.x), oy = Math.round(halfY - this.cam.y + this.shakeY + this.camKick.y);
+    // world -> screen-space (HUD buffer) mapping. Identical to the old formula when v2 is off.
+    const sxOf = (wx: number) => (v2 ? (wx + ox - sw / 2) * (VIEW_W / sw) + VIEW_W / 2 : (wx + ox - VIEW_W / 2) * this.zoom + VIEW_W / 2);
+    const syOf = (wy: number) => (v2 ? (wy + oy - sh / 2) * (VIEW_H / sh) + VIEW_H / 2 : (wy + oy - VIEW_H / 2) * this.zoom + VIEW_H / 2);
     ctx.save();
     ctx.translate(ox, oy);
     ctx.drawImage(this.levelCanvas, 0, 0);
@@ -3174,14 +3555,15 @@ export class Game {
       }
     }
     for (const c of this.corpses) {
-      if (c.z > 0) drawShadow(ctx, c.x, c.y, c.scale, c.z);
-      drawStick(ctx, { x: c.x, y: c.y, c: c.color, c2: c.color2, scale: c.scale, facing: Math.cos(c.rot) >= 0 ? 1 : -1, aim: c.rot, walk: 0, moving: false, pose: c.z > 0 ? 'launched' : 'down', t: 0, acc: c.accessory, weapon: 'none', flash: false, alpha: c.z > 0 ? 1 : 0.8, outline: c.z > 0 ? '#000' : null, eyes: '#000', time: 0, lean: { x: 1, y: 0 }, rot: c.z > 0 ? c.rot : 0, z: c.z, mood: 'dead' });
+      if (c.z > 0 || this.v2) drawShadow(ctx, c.x, c.y, c.scale, c.z);   // game1: shadow stays under settled bodies
+      const fade = this.v2 && c.t > 1.8 ? Math.max(0, 1 - (c.t - 1.8) / 0.5) : 1;
+      drawStick(ctx, { x: c.x, y: c.y, c: c.color, c2: c.color2, scale: c.scale, facing: c.face ?? (Math.cos(c.rot) >= 0 ? 1 : -1), aim: c.rot, walk: 0, moving: false, pose: this.v2 ? (c.z > 2 ? 'fly' : 'knock') : c.z > 0 ? 'launched' : 'down', t: 0, acc: c.accessory, weapon: 'none', flash: false, alpha: (c.z > 0 ? 1 : 0.8) * fade, outline: c.z > 0 ? '#000' : null, eyes: '#000', time: this.v2 ? this.time : 0, lean: { x: 1, y: 0 }, rot: this.v2 ? c.rot : c.z > 0 ? c.rot : 0, z: c.z, mood: 'dead', sqx: this.v2 ? (c.sqx ?? 1) : 1, sqy: this.v2 ? (c.sqy ?? 1) : 1 });
     }
     const shadowScale = 1;
     for (const e of this.enemies) if (!e.dead && e.spawnT <= 0) drawShadow(ctx, e.x, e.y, e.scale * shadowScale, e.z);
     if (this.state !== 'dead') drawShadow(ctx, p.x, p.y, shadowScale, p.z);
     for (const a of this.afterimages) {
-      drawStick(ctx, { x: a.x, y: a.y, c: a.color, c2: a.color, scale: a.scale, facing: a.facing, aim: a.aim, walk: 0, moving: false, pose: a.pose, t: a.t, acc: 'none', weapon: 'none', flash: true, alpha: (a.life / a.max) * 0.45, outline: null, eyes: a.color, time: 0, lean: a.lean });
+      drawStick(ctx, { x: a.x, y: a.y, c: a.color, c2: a.color, scale: a.scale, facing: a.facing, aim: a.aim, walk: 0, moving: false, pose: a.pose, t: a.t, acc: 'none', weapon: 'none', flash: true, alpha: (a.life / a.max) * 0.45, outline: null, eyes: a.color, time: 0, lean: a.lean, limbScale: this.longMode ? 2.5 : 1 });
     }
     const ftg = this.state === 'playing' && !p.fatality ? this.fatalityTarget() : null;
     this.fatTargetId = ftg && (ftg.e.stagger > 0 || this.fatalityCd <= 0) ? ftg.e.id : -1;
@@ -3284,22 +3666,27 @@ export class Game {
     ctx.restore();
 
     // ---- present scene (with cinematic zoom) + screen-space layers
-    sc.fillStyle = pal.bg;
-    sc.fillRect(0, 0, VIEW_W, VIEW_H);
-    if (this.zoom !== 1) {
-      sc.save();
-      sc.translate(VIEW_W / 2, VIEW_H / 2);
-      sc.scale(this.zoom, this.zoom);
-      sc.translate(-VIEW_W / 2, -VIEW_H / 2);
-      sc.drawImage(this.scene, 0, 0);
-      sc.restore();
-    } else sc.drawImage(this.scene, 0, 0);
+    if (!v2) {
+      sc.fillStyle = pal.bg;
+      sc.fillRect(0, 0, VIEW_W, VIEW_H);
+      if (this.zoom !== 1) {
+        sc.save();
+        sc.translate(VIEW_W / 2, VIEW_H / 2);
+        sc.scale(this.zoom, this.zoom);
+        sc.translate(-VIEW_W / 2, -VIEW_H / 2);
+        sc.drawImage(this.scene, 0, 0);
+        sc.restore();
+      } else sc.drawImage(this.scene, 0, 0);
+    }
     if (this.wipe) {
       const r = Math.max(0, (1 - this.wipe.t) * 560);
+      // the scene is presented zoomed (BASE_ZOOM), so map the wipe centre from scene to screen space
+      const wx = sxOf(p.x);
+      const wy = syOf(p.y - 6);
       sc.fillStyle = '#000';
       sc.beginPath();
       sc.rect(0, 0, VIEW_W, VIEW_H);
-      sc.arc(p.x + ox, p.y - 6 + oy, r, 0, Math.PI * 2, true);
+      sc.arc(wx, wy, r, 0, Math.PI * 2, true);
       sc.fill('evenodd');
     }
     if (this.flashA > 0) { sc.globalAlpha = Math.min(0.8, this.flashA); sc.fillStyle = this.flashC; sc.fillRect(0, 0, VIEW_W, VIEW_H); sc.globalAlpha = 1; }
@@ -3313,6 +3700,7 @@ export class Game {
     if (this.state === 'menu') {
       sc.fillStyle = 'rgba(0,0,0,0.15)';
       sc.fillRect(0, 0, VIEW_W, VIEW_H);
+      this.present(sw, sh);
       return;
     }
     drawHUD(sc, this);
@@ -3323,7 +3711,7 @@ export class Game {
       else if (alive.length <= 3 && this.spawnQueue.length === 0) for (const e of alive) targets.push({ x: e.x, y: e.y, c: e.color });
       if (this.exitOpen) targets.push({ x: this.level.exit.x, y: this.level.exit.y, c: pal.accent, label: 'EXIT' });
       for (const t of targets) {
-        const sx = t.x - this.cam.x, sy = t.y - this.cam.y;
+        const sx = v2 ? sxOf(t.x) : t.x - this.cam.x, sy = v2 ? syOf(t.y) : t.y - this.cam.y;
         if (sx >= 0 && sx <= VIEW_W && sy >= 0 && sy <= VIEW_H) continue;
         const m = 14;
         const ax = clamp(sx, m, VIEW_W - m), ay = clamp(sy, m, VIEW_H - m);
@@ -3355,6 +3743,7 @@ export class Game {
       sc.fillStyle = 'rgba(60,0,0,0.35)';
       sc.fillRect(0, 0, VIEW_W, VIEW_H);
     }
+    this.present(sw, sh);
   }
 
   drawPlayer() {
@@ -3396,9 +3785,14 @@ export class Game {
       if (m.limb === 'sweep') { opts.strike = 'ffoot'; opts.impact = t >= 0.3 && t <= 0.7 ? 1 : 0; }
     }
     opts.mood = p.stunT > 0 ? 'hurt' : p.fatality || p.attackPhase !== 'none' ? 'angry' : this.combo >= 6 ? 'happy' : 'normal';
+    if (this.v2 && p.weapon === 'nunchaku' && !p.fatality && !p.dead) {
+      // V2: telapak tangan DEPAN dilas ke grip rantai (world) — lengan di-IK ulang oleh solvePose,
+      // jadi nunchaku benar-benar dipegang, bukan melayang di samping tangan
+      opts.handOverride = { x: this.nunchaku.px[0], y: this.nunchaku.py[0] };
+    }
     drawStick(ctx, opts, prevPose !== pose ? { pose: prevPose, t: p.prevPoseT, blend: p.blend } : undefined);
     if (p.parryT > 0) pring(ctx, p.x, p.y - 6, 9, '#9be7ff', 1, p.aim - 1, p.aim + 1);
-    if (p.weapon === 'nunchaku' && !p.fatality) this.nunchaku.draw(ctx, '#c9a063', '#bdbdbd', p.attackPhase !== 'none' ? this.pal.accent2 : null);
+    if (p.weapon === 'nunchaku' && !p.fatality) this.nunchaku.draw(ctx, this.v2 ? '#b3763a' : '#c9a063', this.v2 ? '#aeb8c6' : '#bdbdbd', this.v2 || p.attackPhase !== 'none' ? this.pal.accent2 : null);
     if (p.weapon === 'axe' || p.weapon === 'dual') {
       const sk = solvePose(opts);
       const m = p.attackPhase !== 'none' && p.moveKey ? MOVES[p.moveKey] : null;
@@ -3452,12 +3846,27 @@ export class Game {
     const flash = e.flash > 0;
     const outline = e.elite ? '#ffffff' : '#000000';
     const eyes = e.elite ? '#ff2a2a' : e.boss ? e.color2 : '#101010';
-    const pose: Pose = e.flinch > 0 && e.pose === 'idle' && e.z <= 0 ? 'hurt' : e.pose;
+    let pose: Pose = e.flinch > 0 && e.pose === 'idle' && e.z <= 0 ? 'hurt' : e.pose;
+    if (this.v2 && e.z > 2 && pose === 'launched') pose = 'fly';   // game1: badan terbang = anggota badan meronta
+    let face = e.facing;
+    if (this.v2 && pose === 'down' && e.down > 0) { pose = (e.fall as Pose) || 'broken'; face = e.facing * (e.fallFlip ?? 1); }
+    // V2 dizzy sway: a stunned enemy rocks side to side (game1 wobbles its lean the same way)
+    const dizzy = this.v2 && e.stun > 0 && e.z <= 0;
+    const dizzyRot = dizzy ? Math.sin(this.time * 9) * 0.16 : 0;
     const moving = e.moving && (pose === 'idle' || pose === 'reload' || pose === 'charge');
     const eStrike = pose === 'punch' ? 'bhand' : pose === 'kick' ? 'ffoot' : pose === 'palm' ? 'both' : null;
-    drawStick(ctx, { x: e.x, y: e.y, c: e.color, c2: e.color2, scale: e.scale, facing: e.facing, aim: moving && (pose === 'idle' || pose === 'reload') ? e.bodyAim : e.aim, look: e.aim, walk: e.walk, moving, pose, strike: eStrike, impact: eStrike && e.poseT >= 0.3 && e.poseT <= 0.7 ? 1 : 0, t: Math.min(1, e.poseT), acc: e.accessory, weapon: e.weapon, flash, alpha: 1, outline, eyes, time: this.time, lean: { x: Math.cos(e.aim), y: Math.sin(e.aim) }, z: e.z, rot: e.z > 0 ? e.rot : 0, vel: this.moveDirOf(e.vx + e.kx * 0.3, e.vy + e.ky * 0.3), stride: e.strideHalf, mood: e.stagger > 0 || e.down > 0 || e.flinch > 0 ? 'hurt' : e.state === 'windup' || e.state === 'attack' || e.state === 'charge' || e.state === 'lunge' ? 'angry' : 'normal' });
+    drawStick(ctx, { x: e.x, y: e.y, c: e.color, c2: e.color2, scale: e.scale, facing: face, aim: moving && (pose === 'idle' || pose === 'reload') ? e.bodyAim : e.aim, look: e.aim, walk: e.walk, moving, pose, strike: eStrike, impact: eStrike && e.poseT >= 0.3 && e.poseT <= 0.7 ? 1 : 0, t: Math.min(1, e.poseT), acc: e.accessory, weapon: e.weapon, flash, alpha: 1, outline, eyes, time: this.time, lean: { x: Math.cos(e.aim), y: Math.sin(e.aim) }, z: e.z, rot: e.z > 0 ? e.rot : dizzyRot, sqx: this.v2 ? (e.sqx ?? 1) : 1, sqy: this.v2 ? (e.sqy ?? 1) : 1, vel: this.moveDirOf(e.vx + e.kx * 0.3, e.vy + e.ky * 0.3), stride: e.strideHalf, anime: this.v2, seed: e.id * 1.7, mood: e.stagger > 0 || e.down > 0 || e.flinch > 0 ? 'hurt' : e.state === 'windup' || e.state === 'attack' || e.state === 'charge' || e.state === 'lunge' ? 'angry' : 'normal' });
     const top = e.y - e.z - 15 * e.scale;
-    if (e.stagger > 0) {
+    if (dizzy) {
+      // PUSING: tiga bintang mengitari kepala + tanda tanya yang berkedip
+      for (let i = 0; i < 3; i++) {
+        const a = this.time * 9 + (i * Math.PI * 2) / 3;
+        const stx = e.x + Math.cos(a) * 5, sty = top - 4 + Math.sin(a) * 2;
+        px(ctx, stx, sty, i % 2 ? '#9ff8ff' : '#ffffff');
+        px(ctx, stx - 1, sty, '#2a6a78'); px(ctx, stx + 1, sty, '#2a6a78');
+      }
+      if (Math.floor(this.time * 7) % 2 === 0) pfontO(ctx, '?', e.x, top - 13, '#9ff8ff', '#000', 1, 'center');
+    } else if (e.stagger > 0) {
       for (let i = 0; i < 3; i++) { const a = this.time * 7 + (i * Math.PI * 2) / 3; px(ctx, e.x + Math.cos(a) * 6, top - 3 + Math.sin(a) * 2, '#ffd700'); }
       if (Math.floor(this.time * 6) % 2 === 0) pfontO(ctx, 'F', e.x, top - 12, '#ffd700', '#000', 1, 'center');
     } else if (e.id === this.fatTargetId) {

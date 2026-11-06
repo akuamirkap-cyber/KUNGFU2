@@ -14,13 +14,49 @@ export function drawShadow(ctx: Ctx, x: number, y: number, s: number, z = 0) {
 }
 
 // ------------------------------------------------------------ LEVEL CANVAS
-export function buildLevelCanvas(level: Level, pal: Palette): HTMLCanvasElement {
+export function buildLevelCanvas(level: Level, pal: Palette, g1 = false): HTMLCanvasElement {
   const cv = document.createElement('canvas');
   cv.width = level.w * TILE;
   cv.height = level.h * TILE;
   const ctx = cv.getContext('2d')!;
   ctx.fillStyle = pal.bg;
   ctx.fillRect(0, 0, cv.width, cv.height);
+  if (g1) {
+    // STICK FIST's exact terrain recipe: flat floor + dot grid + wall-depth bricks (no checkerboard)
+    const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < level.w && y < level.h && tileAt(level, x, y) === 1;
+    for (let ty = 0; ty < level.h; ty++) for (let tx = 0; tx < level.w; tx++) {
+      const X = tx * TILE, Y = ty * TILE;
+      if (tileAt(level, tx, ty) === 0) {
+        ctx.fillStyle = pal.floor; ctx.fillRect(X, Y, TILE, TILE);
+        ctx.fillStyle = pal.floorAlt; ctx.fillRect(X + 7, Y + 7, 2, 2);
+        if ((tx * 7 + ty * 13) % 5 === 0) { ctx.fillStyle = pal.floorAlt; ctx.fillRect(X + 2, Y + 12, 1, 1); }
+        if (solid(tx, ty - 1)) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(X, Y, TILE, 5); }
+      }
+    }
+    for (let ty = 0; ty < level.h; ty++) for (let tx = 0; tx < level.w; tx++) {
+      if (!solid(tx, ty)) continue;
+      const X = tx * TILE, Y = ty * TILE;
+      let near = 9;
+      for (let oy = -2; oy <= 2 && near > 1; oy++) for (let ox = -2; ox <= 2; ox++) {
+        if (!solid(tx + ox, ty + oy) && (ox || oy)) near = Math.min(near, Math.max(Math.abs(ox), Math.abs(oy)));
+      }
+      if (near > 2) {
+        ctx.fillStyle = pal.bg; ctx.fillRect(X, Y, TILE, TILE);
+        if ((tx * 3 + ty * 5) % 4 === 0) { ctx.fillStyle = pal.floor; ctx.fillRect(X + 5, Y + 9, 1, 1); }
+        continue;
+      }
+      if (near === 2) {
+        ctx.fillStyle = pal.wall; ctx.fillRect(X, Y, TILE, TILE);
+        ctx.fillStyle = pal.bg + '88'; ctx.fillRect(X + 2, Y + 4, 5, 1); ctx.fillRect(X + 9, Y + 11, 4, 1);
+        continue;
+      }
+      ctx.fillStyle = pal.wallTop; ctx.fillRect(X, Y, TILE, TILE);
+      if (!solid(tx, ty + 1)) { ctx.fillStyle = pal.wall; ctx.fillRect(X, Y + TILE - 6, TILE, 6); ctx.fillStyle = pal.bg; ctx.fillRect(X, Y + TILE - 6, TILE, 1); }
+      ctx.fillStyle = pal.wall; ctx.fillRect(X + 3, Y + 3, 4, 1); ctx.fillRect(X + 9, Y + 6, 3, 1);
+      if (!solid(tx, ty - 1)) { ctx.fillStyle = pal.accent + '55'; ctx.fillRect(X, Y, TILE, 1); }
+    }
+    return cv;
+  }
   for (let ty = 0; ty < level.h; ty++) {
     for (let tx = 0; tx < level.w; tx++) {
       const t = tileAt(level, tx, ty);
@@ -149,6 +185,19 @@ export function drawHUD(ctx: Ctx, g: Game) {
     prect(ctx, rx, ry, Math.round(rw * clamp(p.rage / 100, 0, 1)), 2, col);
     pfont(ctx, p.rageOn ? `RAGE ${p.rageT.toFixed(1)}` : full ? 'RAGE READY [R]' : 'RAGE', rx + rw + 3, ry - 1, p.rageOn || full ? '#ff6a6a' : '#5a3a3a', 1);
   }
+  // ONE FOR ALL meter (X) — game1's slow-mo super, ported. Sits under the weapon row so nothing moves.
+  {
+    const ox = 6, oy = 34, ow = 43;
+    prect(ctx, ox - 1, oy - 1, ow + 2, 4, '#000');
+    prect(ctx, ox, oy, ow, 2, '#0a222c');
+    const ready = p.ofa >= 25;
+    const col = p.ofaActive ? (Math.sin(g.time * 20) > 0 ? '#ffffff' : '#57e6ff') : ready ? (Math.sin(g.time * 8) > 0 ? '#9ff8ff' : '#57e6ff') : '#1d5566';
+    prect(ctx, ox, oy, Math.round(ow * clamp(p.ofa / 100, 0, 1)), 2, col);
+    prect(ctx, ox + Math.round(ow * 0.25), oy, 1, 2, '#0009');   // notch = activation cost (25)
+    pfont(ctx, p.ofaActive ? `OFA ${Math.ceil(p.ofa / 8)}s` : ready ? 'OFA READY [X]' : 'OFA', ox + ow + 3, oy - 1, p.ofaActive || ready ? '#9ff8ff' : '#2f5a66', 1);
+  }
+  // tag versi (tombol V): biar kelihatan build mana yang sedang jalan
+  pfont(ctx, g.v2 ? 'V2' : 'V1', VIEW_W - 6, VIEW_H - 9, g.v2 ? '#4d8794' : '#5a5a5a', 1, 'right');
   let x = 6;
   const y = 23;
   const slots: WeaponKind[] = ['fist', 'pistol', 'rifle', 'nunchaku', 'katana', 'axe', 'dual'];

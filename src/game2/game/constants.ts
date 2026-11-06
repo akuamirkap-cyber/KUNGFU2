@@ -20,6 +20,21 @@ export interface Zone {
   pal: Palette;
 }
 
+/** V2 terrain colours: the EXACT STICK FIST biome hexes (bg/floor/floorDot/wall/wallTop/accent), so game2's
+ *  ground reads 100% like game1. floorAlt = game1's floorDot, accent2 = game1's single accent. */
+export const G1_BIOMES: Palette[] = [
+  { bg: '#0b0b12', floor: '#15151f', floorAlt: '#1d1d2a', wall: '#2a2a3d', wallTop: '#3b3b55', accent: '#ff3b3b', accent2: '#ff3b3b' },
+  { bg: '#08060f', floor: '#120d20', floorAlt: '#1a1330', wall: '#2b1b4d', wallTop: '#4b2d85', accent: '#ff2d95', accent2: '#ff2d95' },
+  { bg: '#070d08', floor: '#0f1a10', floorAlt: '#15241a', wall: '#1e3a22', wallTop: '#2f5a34', accent: '#ffcc33', accent2: '#ffcc33' },
+  { bg: '#0e0a06', floor: '#1b1409', floorAlt: '#241b0e', wall: '#3a2c14', wallTop: '#5a4520', accent: '#ff7a1a', accent2: '#ff7a1a' },
+  { bg: '#060a12', floor: '#0e1626', floorAlt: '#152036', wall: '#223a5a', wallTop: '#3a5f8f', accent: '#5ff0ff', accent2: '#5ff0ff' },
+  { bg: '#120406', floor: '#1e080b', floorAlt: '#2a0c10', wall: '#4a1218', wallTop: '#7a1c26', accent: '#ffd166', accent2: '#ffd166' },
+  { bg: '#050505', floor: '#0e0e0e', floorAlt: '#161616', wall: '#262626', wallTop: '#3d3d3d', accent: '#a3ff3b', accent2: '#a3ff3b' },
+  { bg: '#0a0e1c', floor: '#141a30', floorAlt: '#1b2340', wall: '#2c3a66', wallTop: '#4a5f9c', accent: '#ffffff', accent2: '#ffffff' },
+  { bg: '#07000f', floor: '#10021c', floorAlt: '#170528', wall: '#2c0a4e', wallTop: '#4e1486', accent: '#3bffd8', accent2: '#3bffd8' },
+  { bg: '#0c0a04', floor: '#17130a', floorAlt: '#1f1a0e', wall: '#3d3214', wallTop: '#6b5a22', accent: '#ffe14d', accent2: '#ffe14d' },
+];
+
 export const ZONES: Zone[] = [
   { name: 'RUST YARD', sub: 'THE FIRST STEP', pal: { bg: '#120a0a', floor: '#241512', floorAlt: '#2a1915', wall: '#4a2a22', wallTop: '#6b3a2c', accent: '#ff5a36', accent2: '#ffd166' } },
   { name: 'NEON DOJO', sub: 'LIGHTS IN THE DARK', pal: { bg: '#070b18', floor: '#10162b', floorAlt: '#141b33', wall: '#232f5c', wallTop: '#3a4c8a', accent: '#35f0ff', accent2: '#ff3df2' } },
@@ -49,3 +64,6 @@ export function zoneOf(level: number): number {
 
 export const PLAYER_COLOR = '#ffffff';
 export const PLAYER_BAND = '#ff3b3b';
+
+/** Permanent camera zoom-in for the whole game (+40%). Cinematic zooms are multiplied on top of it. */
+export const BASE_ZOOM = 1.4;

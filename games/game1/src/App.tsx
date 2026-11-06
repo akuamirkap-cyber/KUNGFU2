@@ -41,6 +41,36 @@ export default function App() {
       game.mouse.x = (e.clientX - r.left) / r.width * VW;
       game.mouse.y = (e.clientY - r.top) / r.height * VH;
     };
+    // --- Virtual / keyboard strike support -------------------------------------------------
+    // The sim reads strikes from the MOUSE only (LMB = combo, RMB = parry) and aims with the
+    // cursor, so a keyboard-only player would otherwise (a) never throw a punch at all and (b) face
+    // whatever stale spot the cursor last hovered. J / K act as LMB / RMB, and when no real cursor
+    // has been used for a moment the strike aims at the nearest living enemy. SPACE stays JUMP.
+    let realMouseAt = 0;
+    const aimAssist = () => {
+      if (performance.now() - realMouseAt < 1500) return; // a real cursor is in use: don't fight it
+      const p = game.player;
+      if (!p) return;
+      let bi = -1; let bd = Infinity;
+      for (let i = 0; i < game.enemies.length; i++) {
+        const e = game.enemies[i];
+        if (e.state === 'dead' || e.state === 'victim' || e.state === 'teleport') continue;
+        const d = (e.x - p.x) * (e.x - p.x) + (e.y - p.y) * (e.y - p.y);
+        if (d < bd) { bd = d; bi = i; }
+      }
+      if (bi < 0) return;
+      const t = game.enemies[bi];
+      game.mouse.x = (t.x - game.cam.x) * game.zoom + VW / 2;
+      game.mouse.y = (t.y - game.cam.y) * game.zoom + VH / 2;
+    };
+    const strikeDown = (b: number) => {
+      initAudio(); resumeAudio();
+      if (game.phase !== 'playing') return;
+      aimAssist();
+      game.mouseDown(b);
+    };
+    const strikeUp = (b: number) => game.mouseUp(b);
+
     const kd = (e: KeyboardEvent) => {
       if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
@@ -52,12 +82,18 @@ export default function App() {
       if (game.phase === 'title' && (e.code === 'Enter' || e.code === 'Space')) { game.newRun(false); return; }
       if (game.phase === 'dead' && e.code === 'Enter') { if (game.isEndless) game.startEndless(); else game.newRun(true); return; }
       if (game.phase === 'upgrade' && ['Digit1', 'Digit2', 'Digit3'].includes(e.code)) { const i = parseInt(e.code.slice(5)) - 1; const u = game.upgradeChoices[i]; if (u) game.pickUpgrade(u); return; }
+      if (e.code === 'KeyJ') { strikeDown(0); return; }
+      if (e.code === 'KeyK') { strikeDown(2); return; }
       game.keyDown(e.code);
     };
-    const ku = (e: KeyboardEvent) => game.keyUp(e.code);
-    const md = (e: MouseEvent) => { initAudio(); resumeAudio(); toCanvas(e); if (game.phase === 'playing') { e.preventDefault(); game.mouseDown(e.button); } };
+    const ku = (e: KeyboardEvent) => {
+      if (e.code === 'KeyJ') { strikeUp(0); return; }
+      if (e.code === 'KeyK') { strikeUp(2); return; }
+      game.keyUp(e.code);
+    };
+    const md = (e: MouseEvent) => { realMouseAt = performance.now(); initAudio(); resumeAudio(); toCanvas(e); if (game.phase === 'playing') { e.preventDefault(); game.mouseDown(e.button); } };
     const mu = (e: MouseEvent) => { game.mouseUp(e.button); };
-    const mm = (e: MouseEvent) => toCanvas(e);
+    const mm = (e: MouseEvent) => { realMouseAt = performance.now(); toCanvas(e); };
     const wh = (e: WheelEvent) => { if (game.phase === 'playing') { e.preventDefault(); game.wheel(e.deltaY); } };
     const cm = (e: MouseEvent) => e.preventDefault();
     const blur = () => { game.keys.clear(); game.mouse.down = false; game.mouse.rdown = false; if (game.phase === 'playing') game.setPhase('paused'); };
